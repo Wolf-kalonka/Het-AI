@@ -1,0 +1,41 @@
+# .github/workflows/bot.yml
+name: 'Lichess Bot Runner' # Имя твоего воркфлоу
+
+on:
+  # Запускаем воркфлоу вручную через интерфейс GitHub
+  workflow_dispatch:
+  # Запускаем по расписанию каждый час
+  schedule:
+    - cron: '0 * * * *'  # Каждый час в 0 минут
+
+jobs:
+  run-bot:
+    # Используем последнюю версию Ubuntu
+    runs-on: ubuntu-latest
+    # Таймаут в 6 часов, чтобы бот не отключался раньше времени
+    timeout-minutes: 360
+
+    steps:
+      # 1. Скачиваем код из репозитория
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Устанавливаем Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Используй ту же версию, что и у тебя
+
+      # 3. Устанавливаем зависимости из requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 4. Запускаем самого бота
+      - name: Run bot
+        env:
+          # Передаем токен из секретов в переменную окружения
+          LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
+        run: |
+          python my_bot.py
