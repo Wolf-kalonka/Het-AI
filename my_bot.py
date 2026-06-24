@@ -4,7 +4,7 @@ import threading
 import berserk
 import chess
 
-# ================= 1. ШАХМАТНЫЙ ДВИЖОК =================
+# ================= 1. ТВОЙ ШАХМАТНЫЙ ДВИЖОК =================
 
 def evaluate_board(board):
     """ Оценка позиции на доске с учетом материала и геометрии """
@@ -23,7 +23,6 @@ def evaluate_board(board):
         if piece:
             val = piece_values[piece.piece_type]
             
-            # --- ПОЗИЦИОННАЯ ЛОГИКА (ЦЕНТР И РАЗВИТИЕ) ---
             row = chess.square_rank(square)
             col = chess.square_file(square)
             
@@ -115,7 +114,7 @@ def find_best_move(board, depth):
             
     return best_move
 
-# ================= 2. ЛОГИКА АВТО-ВЫЗОВОВ НА РЕЙТИНГ =================
+# ================= 2. МНОГОПОТОЧНАЯ СИСТЕМА И АВТО-ВЫЗОВЫ =================
 
 TOKEN = "lip_XG5jv7YWcOFKO1Sg6RRG"
 session = berserk.TokenSession(TOKEN)
@@ -124,21 +123,21 @@ client = berserk.Client(session)
 my_username = client.account.get()['username']
 my_id = client.account.get()['id']
 
-is_playing = False
+# Сет для контроля активных игр (чтобы не играть 2 партии параллельно на слабом процессоре)
+active_games = set()
 
 def auto_challenger():
-    """ Фоновый поток для поиска и отправки РЕЙТИНГОВЫХ вызовов """
-    global is_playing
-    print("📡 Поток автоматического поиска соперников запущен (РЕЖИМ НАБОРA РЕЙТИНГА)!")
+    """ Фоновый поток: ищет жертв для рейтинга, пока бот свободен """
+    print("📡 Поток автоматического поиска соперников запущен!")
     time.sleep(5)
     
     while True:
         try:
-            if is_playing:
-                time.sleep(10)
+            # Если бот прямо сейчас играет — отдыхаем
+            if len(active_games) > 0:
+                time.sleep(5)
                 continue
             
-            # Контроли времени для рейтинговых игр
             time_controls = [
                 (180, 2),   # Блиц 3+2
                 (300, 0),   # Блиц 5+0
@@ -151,138 +150,141 @@ def auto_challenger():
             target_username = None
             
             if mode == 'bot':
-                print("🤖 Ищем случайного онлайн-бота для рейтинговой дуэли...")
+                print("🤖 Сканируем онлайн-ботов...")
                 online_bots = list(client.bots.get_online_bots())
                 valid_bots = [b['id'] for b in online_bots if b.get('id') != my_id]
                 if valid_bots:
                     target_username = random.choice(valid_bots)
                     
             elif mode == 'human':
-                print("🌍 Ищем случайного человека через лидерборд для битвы за Эло...")
+                print("🌍 Ищем человека через лидерборд...")
                 try:
-                    # Берем топ-100 игроков в блиц
                     leaderboard = client.users.get_leaderboard('blitz', nb=100)
                     pool = [user['id'] for user in leaderboard if 'id' in user]
-                    # Целимся в игроков пониже из этого списка, чтобы повысить шансы на принятие и победу
                     if len(pool) > 40:
                         target_username = random.choice(pool[40:])
                     elif pool:
                         target_username = random.choice(pool)
                 except Exception as leader_err:
-                    print(f"⚠️ Не удалось загрузить лидерборд: {leader_err}")
+                    print(f"⚠️ Ошибка загрузки топа: {leader_err}")
             
-            # Отправляем СТРОГО рейтинговый вызов
-            if target_username:
-                print(f"🔥 Отправляем РЕЙТИНГОВЫЙ вызов к @{target_username} (Контроль: {limit // 60}+{inc})")
+            if target_username and len(active_games) == 0:
+                print(f"🔥 Отправляем РЕЙТИНГОВЫЙ вызов к @{target_username} ({limit // 60}+{inc})")
                 client.challenges.create(username=target_username, rated=True, clock_limit=limit, clock_increment=inc)
-                
-                # Даем 60 секунд на принятие. Если проигнорировали — идем искать дальше.
-                time.sleep(60)
+                time.sleep(45)  # Ждем ответа 45 секунд
             else:
-                time.sleep(15)
+                time.sleep(10)
                 
         except Exception as e:
-            print(f"⚠️ Ошибка в блоке авто-вызова: {e}")
-            time.sleep(20)
+            print(f"⚠️ Ошибка в потоке вызовов: {e}")
+            time.sleep(15)
 
-# Запускаем фоновый поиск
+def handle_game(game_id):
+    """ Изолированный поток для ведения конкретной партии """
+    global active_games
+    print(f"⚔️ Поток для партии {game_id} успешно запущен!")
+    
+    board = chess.Board()
+    moves = []
+    my_color = None
+    chat_welcome_sent = False
+    chat_goodbye_sent = False
+
+    try:
+        for state in client.bots.stream_game_state(game_id):
+            state_type = state.get('type')
+            game_data = None
+
+            if state_type == 'gameFull':
+                white_id = state.get('white', {}).get('id', '')
+                black_id = state.get('black', {}).get('id', '')
+                if white_id.lower() == my_username.lower():
+                    my_color = chess.WHITE
+                elif black_id.lower() == my_username.lower():
+                    my_color = chess.BLACK
+                
+                print(f"[{game_id}] Я играю {'белыми' if my_color == chess.WHITE else 'чёрными'}")
+                
+                if not chat_welcome_sent:
+                    try:
+                        client.bots.post_message(game_id, "Привет! Приятной рейтинговой игры! 😊 Удачи!")
+                        chat_welcome_sent = True
+                    except Exception:
+                        pass
+                        
+                game_data = state.get('state', {})
+            
+            elif state_type == 'gameState':
+                game_data = state
+
+            if game_data:
+                raw_moves = game_data.get('moves', '')
+                all_moves = raw_moves.split() if raw_moves else []
+                
+                while len(moves) < len(all_moves):
+                    board.push_uci(all_moves[len(moves)])
+                    moves.append(all_moves[len(moves)-1])
+
+                status = game_data.get('status')
+                if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
+                    print(f"[{game_id}] Партия завершена. Статус: {status}")
+                    if not chat_goodbye_sent:
+                        try:
+                            client.bots.post_message(game_id, "Спасибо за партию! Хорошая игра! GG WP 🤝")
+                            chat_goodbye_sent = True
+                        except Exception:
+                            pass
+                    break
+
+            if my_color is not None and board.turn == my_color and not board.is_game_over():
+                print(f"[{game_id}] Думаю над ходом...")
+                move = find_best_move(board, depth=3)
+                if move:
+                    time.sleep(0.1)
+                    try:
+                        client.bots.make_move(game_id, move.uci())
+                        print(f"[{game_id}] Сделал ход: {move.uci()}")
+                    except Exception as m_err:
+                        print(f"⚠️ Не удалось отправить ход: {m_err}")
+
+    except Exception as e:
+        print(f"💥 Критическая ошибка в потоке игры {game_id}: {e}")
+    finally:
+        # Важно: всегда удаляем игру из активных, чтобы освободить бота
+        active_games.discard(game_id)
+        print(f"🏁 Поток партии {game_id} закрыт.")
+
+# ================= 3. ГЛАВНЫЙ СЛУШАТЕЛЬ (ОСНОВНОЙ ПОТОК) =================
+
+print(f"Бот {my_username} онлайн. Начинаем фарм рейтинга!")
+
+# Запускаем фонового зазывалу
 threading.Thread(target=auto_challenger, daemon=True).start()
-
-# ================= 3. ОСНОВНОЙ ИГРОВОЙ ЦИКЛ С ЧАТОМ =================
-
-print(f"Я бот {my_username}. Скрипт готов набивать рейтинг!")
 
 while True:
     try:
+        # Этот цикл теперь НИКОГДА не блокируется играми
         for event in client.bots.stream_incoming_events():
             
-            # Обработка входящих вызовов
             if event.get('type') == 'challenge':
                 challenge_id = event.get('challenge', {}).get('id')
                 challenger = event.get('challenge', {}).get('challenger', {}).get('id', 'Unknown')
-                is_challenge_rated = event.get('challenge', {}).get('rated', False)
                 
                 if challenge_id:
-                    # Нам выгодно принимать входящие вызовы, особенно рейтинговые!
-                    if not is_playing:
+                    if len(active_games) == 0:
                         client.bots.accept_challenge(challenge_id)
-                        print(f"📥 Принят входящий вызов от {challenger}! (Рейтинговый: {is_challenge_rated})")
+                        print(f"📥 Приняли входящий вызов от {challenger}!")
                     else:
                         client.bots.decline_challenge(challenge_id, reason='later')
+                        print(f"⏳ Отклонили вызов от {challenger}, так как сейчас играем.")
 
-            # Логика самой игры
-            if event.get('type') == 'gameStart':
+            elif event.get('type') == 'gameStart':
                 game_id = event.get('game', {}).get('id')
-                print(f"⚔️ Битва за очки рейтинга {game_id} началась!")
-                
-                is_playing = True
-                board = chess.Board()
-                moves = []
-                my_color = None
-                chat_welcome_sent = False
-                chat_goodbye_sent = False
-
-                try:
-                    for state in client.bots.stream_game_state(game_id):
-                        state_type = state.get('type')
-                        game_data = None
-
-                        if state_type == 'gameFull':
-                            white_id = state.get('white', {}).get('id', '')
-                            black_id = state.get('black', {}).get('id', '')
-                            if white_id.lower() == my_username.lower():
-                                my_color = chess.WHITE
-                            elif black_id.lower() == my_username.lower():
-                                my_color = chess.BLACK
-                            
-                            # Приветствие в чате
-                            if not chat_welcome_sent:
-                                try:
-                                    client.bots.post_message(game_id, "Привет! Приятной рейтинговой игры! 😊 Удачи!")
-                                    chat_welcome_sent = True
-                                except Exception:
-                                    pass
-                                    
-                            game_data = state.get('state', {})
-                        
-                        elif state_type == 'gameState':
-                            game_data = state
-
-                        if game_data:
-                            raw_moves = game_data.get('moves', '')
-                            all_moves = raw_moves.split() if raw_moves else []
-                            
-                            while len(moves) < len(all_moves):
-                                board.push_uci(all_moves[len(moves)])
-                                moves.append(all_moves[len(moves)-1])
-
-                            status = game_data.get('status')
-                            if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
-                                print(f"Партия {game_id} завершена. Статус: {status}")
-                                
-                                # Прощание в чате
-                                if not chat_goodbye_sent:
-                                    try:
-                                        client.bots.post_message(game_id, "Спасибо за партию! Хорошая игра! GG WP 🤝")
-                                        chat_goodbye_sent = True
-                                    except Exception:
-                                        pass
-                                break
-
-                        # Делаем ход движка
-                        if my_color is not None and board.turn == my_color and not board.is_game_over():
-                            move = find_best_move(board, depth=3)
-                            if move:
-                                time.sleep(0.1)
-                                client.bots.make_move(game_id, move.uci())
-
-                except Exception as e:
-                    print(f"Ошибка внутри игрового стрима {game_id}: {e}")
-                
-                is_playing = False
-                print("Партия окончена, возвращаемся в режим поиска Эло...")
+                if game_id not in active_games:
+                    active_games.add(game_id)
+                    # Мгновенно перенаправляем игру в отдельный поток!
+                    threading.Thread(target=handle_game, args=(game_id,), daemon=True).start()
 
     except Exception as e:
-        print(f"Критическая ошибка главного цикла: {e}")
-        is_playing = False
+        print(f"🚨 Критическая ошибка в главном потоке: {e}")
         time.sleep(5)
