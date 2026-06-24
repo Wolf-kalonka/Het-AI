@@ -6,7 +6,7 @@ import os
 import berserk
 import chess
 
-# ================= 1. ТВОЙ ШАХМАТНЫЙ ДВИЖОК + СИСТЕМА ПАМЯТИ =================
+# ================= 1. ШАХМАТНЫЙ ДВИЖОК + УМНАЯ ОЦЕНКА НИЧЬИХ =================
 
 MEMORY_FILE = "bot_memory.json"
 memory_lock = threading.Lock()
@@ -31,17 +31,12 @@ def save_bad_move(fen, move_uci):
     """Добавляет ход в черный список для конкретной позиции"""
     global bad_moves_db
     with memory_lock:
-        # Берем только первые две части FEN (расположение фигур и чей ход),
-        # чтобы память работала независимо от прав на рокировку и счетчика ходов
         short_fen = " ".join(fen.split()[:2])
-        
         if short_fen not in bad_moves_db:
             bad_moves_db[short_fen] = []
-        
         if move_uci not in bad_moves_db[short_fen]:
             bad_moves_db[short_fen].append(move_uci)
             print(f"💾 Ход {move_uci} добавлен в черный список для позиции: {short_fen}")
-            
             try:
                 with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
                     json.dump(bad_moves_db, f, indent=4, ensure_ascii=False)
@@ -84,12 +79,18 @@ def evaluate_board(board):
     return score
 
 def minimax(board, depth, alpha, beta, is_maximizing):
-    """ Минимакс с альфа-бета отсечением """
+    """ Минимакс с альфа-бета отсечением и фиксом троекратного повторения """
+    
+    # ФИКС: Если ход ведет к троекратному повторению — это ничья (оценка 0.0)
+    # Это заставит бота избегать повторений, если он побеждает, и искать их, если летит
+    if board.is_repetition(3):
+        return 0.0
+
     if board.is_game_over():
         outcome = board.outcome()
-        if outcome.winner == chess.WHITE:
+        if outcome and outcome.winner == chess.WHITE:
             return 10000.0 + depth
-        elif outcome.winner == chess.BLACK:
+        elif outcome and outcome.winner == chess.BLACK:
             return -10000.0 - depth
         return 0.0
 
@@ -122,7 +123,7 @@ def minimax(board, depth, alpha, beta, is_maximizing):
         return best
 
 def find_best_move(board, depth):
-    """ Ищет лучший ход, штрафуя ходы из базы ошибок """
+    """ Ищет лучший ход, штрафуя ошибки, и возвращает (ход, оценка) """
     my_color = board.turn
     short_fen = " ".join(board.fen().split()[:2])
     
@@ -134,7 +135,6 @@ def find_best_move(board, depth):
     alpha = -float('inf')
     beta = float('inf')
 
-    # Проверяем, есть ли у нас зафиксированные ошибки в этой позиции
     known_bad_moves = bad_moves_db.get(short_fen, [])
 
     if my_color == chess.WHITE:
@@ -143,10 +143,8 @@ def find_best_move(board, depth):
             move_uci = move.uci()
             board.push(move)
             
-            # Если ход в черном списке — жестко штрафуем его оценку
             if move_uci in known_bad_moves:
-                score = -9000.0  # Для белых это ужасно
-                print(f"⚠️ Минимакс заметил ошибку из прошлого ({move_uci}). Применяем штраф.")
+                score = -9000.0
             else:
                 score = minimax(board, depth - 1, alpha, beta, False)
                 
@@ -161,10 +159,8 @@ def find_best_move(board, depth):
             move_uci = move.uci()
             board.push(move)
             
-            # Если ход в черном списке — жестко штрафуем его оценку
             if move_uci in known_bad_moves:
-                score = 9000.0  # Для черных это ужасно (так как они минимизируют)
-                print(f"⚠️ Минимакс заметил ошибку из прошлого ({move_uci}). Применяем штраф.")
+                score = 9000.0
             else:
                 score = minimax(board, depth - 1, alpha, beta, True)
                 
@@ -174,7 +170,11 @@ def find_best_move(board, depth):
                 best_move = move
             beta = min(beta, best_score)
             
-    return best_move if best_move else random.choice(legal_moves_list)
+    if not best_move and legal_moves_list:
+        best_move = random.choice(legal_moves_list)
+        best_score = evaluate_board(board)
+        
+    return best_move, best_score
 
 # ================= 2. НАСТРОЙКИ МНОГОПОТОЧНОСТИ И СЕТИ =================
 
@@ -192,7 +192,7 @@ sent_welcomes = set()
 sent_goodbyes = set()   
 
 def auto_challenger():
-    """ Фоновый поток: ищет соперников, пока лимит одновременных партий не исчерпан """
+    """ Фоновый поток: поиск рейтинговых матчей """
     print(f"📡 Поток авто-поиска запущен! Лимит одновременных игр: {MAX_CONCURRENT_GAMES}")
     time.sleep(5)
     
@@ -202,9 +202,7 @@ def auto_challenger():
                 time.sleep(5)
                 continue
             
-            time_controls = [
-                (180, 2), (300, 0), (300, 3), (600, 0)
-            ]
+            time_controls = [(180, 2), (300, 0), (300, 3), (600, 0)]
             limit, inc = random.choice(time_controls)
             mode = random.choice(['bot', 'human'])
             target_username = None
@@ -235,16 +233,15 @@ def auto_challenger():
             time.sleep(15)
 
 def handle_game(game_id):
-    """ Изолированный поток для ведения конкретной партии с записью истории ходов """
+    """ Изолированный поток для ведения конкретной партии """
     global active_games, sent_welcomes, sent_goodbyes
     print(f"⚔️ Поток для партии {game_id} успешно запущен!")
     
     board = chess.Board()
     moves = []
     my_color = None
-    
-    # Сюда пишем историю: (FEN до нашего хода, сам сделанный ход в формате UCI)
     my_moves_history = [] 
+    draw_offered_by_me = False 
 
     try:
         for state in client.bots.stream_game_state(game_id):
@@ -281,19 +278,36 @@ def handle_game(game_id):
                     board.push_uci(all_moves[len(moves)])
                     moves.append(all_moves[len(moves)-1])
 
+                # --- ЛОГИКА ОБРАБОТКИ НИЧЬИХ ОТ СОПЕРНИКА ---
+                draw_offer = game_data.get('drawOffer')
+                opponent_color_str = 'white' if my_color == chess.BLACK else 'black'
+                
+                if draw_offer == opponent_color_str:
+                    current_eval = evaluate_board(board)
+                    my_current_score = current_eval if my_color == chess.WHITE else -current_eval
+                    
+                    if my_current_score > 1.0:
+                        print(f"[{game_id}] 😎 Соперник просит ничью, но мы ведем (+{my_current_score:.2f}). ОТКЛОНЯЕМ!")
+                        try:
+                            client.bots.handle_draw(game_id, accept=False)
+                        except Exception: pass
+                    else:
+                        print(f"[{game_id}] 🤝 Позиция равная или плохая ({my_current_score:.2f}). ПРИНИМАЕМ ничью для защиты рейтинга!")
+                        try:
+                            client.bots.handle_draw(game_id, accept=True)
+                        except Exception: pass
+
                 status = game_data.get('status')
                 if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
                     print(f"[{game_id}] Партия завершена. Статус: {status}")
                     
-                    # --- АНАЛИЗ РЕЗУЛЬТАТА И ОБУЧЕНИЕ ---
-                    winner = game_data.get('winner') # 'white' или 'black'
+                    winner = game_data.get('winner') 
                     if winner:
                         i_lost = (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE)
                         if i_lost and my_moves_history:
-                            # Берем самый последний сделанный нами ход в этой партии
                             bad_fen, bad_move = my_moves_history[-1]
                             save_bad_move(bad_fen, bad_move)
-                            print(f"❌ Партия проиграна. Бот запомнил роковую ошибку: {bad_move}")
+                            print(f"❌ Партия проиграна. Бот запомнил ошибку: {bad_move}")
                     
                     if game_id not in sent_goodbyes:
                         sent_goodbyes.add(game_id)
@@ -303,16 +317,32 @@ def handle_game(game_id):
                             pass
                     break
 
+            # --- ХОД ДВИЖКА ---
             if my_color is not None and board.turn == my_color and not board.is_game_over():
-                current_fen = board.fen() # Сохраняем позицию до вычисления хода
+                current_fen = board.fen() 
                 
-                move = find_best_move(board, depth=3)
+                move, score = find_best_move(board, depth=3)
+                my_score = score if my_color == chess.WHITE else -score
+                
+                if abs(my_score) > 5000:
+                    eval_bar = "МАТ на доске!"
+                else:
+                    eval_bar = f"{my_score:+.2f}"
+                print(f"📈 [{game_id}] ШКАЛА ОЦЕНКИ: {eval_bar}")
+                
+                # Спасение рейтинга при жестком сливе
+                if my_score < -2.2 and not draw_offered_by_me:
+                    print(f"[{game_id}] 🤯 Всё плохо ({my_score:.2f}). Пытаемся схитрить и отправляем предложение ничьей!")
+                    try:
+                        client.bots.handle_draw(game_id, accept=True)
+                        draw_offered_by_me = True
+                    except Exception: pass
+                
                 if move:
                     move_uci = move.uci()
                     time.sleep(0.1)
                     try:
                         client.bots.make_move(game_id, move_uci)
-                        # Записываем в локальную историю потока
                         my_moves_history.append((current_fen, move_uci))
                         print(f"[{game_id}] Сделал ход: {move_uci}")
                     except Exception as m_err:
@@ -326,8 +356,8 @@ def handle_game(game_id):
 
 # ================= 3. ЗАПУСК БОТА =================
 
-load_memory() # Подгружаем базу данных ошибок
-print(f"Бот {my_username} онлайн. Начинаем фарм с функцией самообучения!")
+load_memory() 
+print(f"Бот {my_username} онлайн. Начинаем фарм с контролем ничьих и шкалой оценки!")
 
 threading.Thread(target=auto_challenger, daemon=True).start()
 
