@@ -1,10 +1,52 @@
 import time
 import random
 import threading
+import json
+import os
 import berserk
 import chess
 
-# ================= 1. ТВОЙ ШАХМАТНЫЙ ДВИЖОК =================
+# ================= 1. ТВОЙ ШАХМАТНЫЙ ДВИЖОК + СИСТЕМА ПАМЯТИ =================
+
+MEMORY_FILE = "bot_memory.json"
+memory_lock = threading.Lock()
+bad_moves_db = {}
+
+def load_memory():
+    """Загружает базу данных плохих ходов из файла"""
+    global bad_moves_db
+    if os.path.exists(MEMORY_FILE):
+        try:
+            with open(MEMORY_FILE, 'r', encoding='utf-8') as f:
+                bad_moves_db = json.load(f)
+            print(f"🧠 Память загружена! Найдено уникальных позиций с ошибками: {len(bad_moves_db)}")
+        except Exception as e:
+            print(f"⚠️ Не удалось прочитать файл памяти: {e}. Начинаем с чистого листа.")
+            bad_moves_db = {}
+    else:
+        print("🧠 Файл памяти не найден. Будет создан автоматически после первого поражения.")
+        bad_moves_db = {}
+
+def save_bad_move(fen, move_uci):
+    """Добавляет ход в черный список для конкретной позиции"""
+    global bad_moves_db
+    with memory_lock:
+        # Берем только первые две части FEN (расположение фигур и чей ход),
+        # чтобы память работала независимо от прав на рокировку и счетчика ходов
+        short_fen = " ".join(fen.split()[:2])
+        
+        if short_fen not in bad_moves_db:
+            bad_moves_db[short_fen] = []
+        
+        if move_uci not in bad_moves_db[short_fen]:
+            bad_moves_db[short_fen].append(move_uci)
+            print(f"💾 Ход {move_uci} добавлен в черный список для позиции: {short_fen}")
+            
+            try:
+                with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(bad_moves_db, f, indent=4, ensure_ascii=False)
+            except Exception as e:
+                print(f"⚠️ Ошибка записи в файл памяти: {e}")
 
 def evaluate_board(board):
     """ Оценка позиции на доске с учетом материала и геометрии """
@@ -80,8 +122,9 @@ def minimax(board, depth, alpha, beta, is_maximizing):
         return best
 
 def find_best_move(board, depth):
-    """ Ищет лучший ход со случайным выбором при равных оценках """
+    """ Ищет лучший ход, штрафуя ходы из базы ошибок """
     my_color = board.turn
+    short_fen = " ".join(board.fen().split()[:2])
     
     legal_moves_list = list(board.legal_moves)
     random.shuffle(legal_moves_list)
@@ -91,11 +134,22 @@ def find_best_move(board, depth):
     alpha = -float('inf')
     beta = float('inf')
 
+    # Проверяем, есть ли у нас зафиксированные ошибки в этой позиции
+    known_bad_moves = bad_moves_db.get(short_fen, [])
+
     if my_color == chess.WHITE:
         best_score = -float('inf')
         for move in ordered_moves:
+            move_uci = move.uci()
             board.push(move)
-            score = minimax(board, depth - 1, alpha, beta, False)
+            
+            # Если ход в черном списке — жестко штрафуем его оценку
+            if move_uci in known_bad_moves:
+                score = -9000.0  # Для белых это ужасно
+                print(f"⚠️ Минимакс заметил ошибку из прошлого ({move_uci}). Применяем штраф.")
+            else:
+                score = minimax(board, depth - 1, alpha, beta, False)
+                
             board.pop()
             if score > best_score:
                 best_score = score
@@ -104,15 +158,23 @@ def find_best_move(board, depth):
     else:
         best_score = float('inf')
         for move in ordered_moves:
+            move_uci = move.uci()
             board.push(move)
-            score = minimax(board, depth - 1, alpha, beta, True)
+            
+            # Если ход в черном списке — жестко штрафуем его оценку
+            if move_uci in known_bad_moves:
+                score = 9000.0  # Для черных это ужасно (так как они минимизируют)
+                print(f"⚠️ Минимакс заметил ошибку из прошлого ({move_uci}). Применяем штраф.")
+            else:
+                score = minimax(board, depth - 1, alpha, beta, True)
+                
             board.pop()
             if score < best_score:
                 best_score = score
                 best_move = move
             beta = min(beta, best_score)
             
-    return best_move
+    return best_move if best_move else random.choice(legal_moves_list)
 
 # ================= 2. НАСТРОЙКИ МНОГОПОТОЧНОСТИ И СЕТИ =================
 
@@ -126,7 +188,7 @@ my_id = client.account.get()['id']
 MAX_CONCURRENT_GAMES = 2  
 
 active_games = set()
-sent_welcomes = set()   # Теперь эти списки никогда не очищаются во время сессии
+sent_welcomes = set()   
 sent_goodbyes = set()   
 
 def auto_challenger():
@@ -141,25 +203,18 @@ def auto_challenger():
                 continue
             
             time_controls = [
-                (180, 2),   # Блиц 3+2
-                (300, 0),   # Блиц 5+0
-                (300, 3),   # Блиц 5+3
-                (600, 0)    # Рапид 10+0
+                (180, 2), (300, 0), (300, 3), (600, 0)
             ]
             limit, inc = random.choice(time_controls)
-            
             mode = random.choice(['bot', 'human'])
             target_username = None
             
             if mode == 'bot':
-                print("🤖 Сканируем онлайн-ботов...")
                 online_bots = list(client.bots.get_online_bots())
                 valid_bots = [b['id'] for b in online_bots if b.get('id') != my_id]
                 if valid_bots:
                     target_username = random.choice(valid_bots)
-                    
             elif mode == 'human':
-                print("🌍 Ищем человека через лидерборд...")
                 try:
                     leaderboard = client.users.get_leaderboard('blitz', nb=100)
                     pool = [user['id'] for user in leaderboard if 'id' in user]
@@ -167,28 +222,29 @@ def auto_challenger():
                         target_username = random.choice(pool[40:])
                     elif pool:
                         target_username = random.choice(pool)
-                except Exception as leader_err:
-                    print(f"⚠️ Ошибка загрузки топа: {leader_err}")
+                except Exception:
+                    pass
             
             if target_username and len(active_games) < MAX_CONCURRENT_GAMES:
-                print(f"🔥 Отправляем РЕЙТИНГОВЫЙ вызов к @{target_username} ({limit // 60}+{inc})")
+                print(f"🔥 Отправляем РЕЙТИНГОВЫЙ вызов к @{target_username}")
                 client.challenges.create(username=target_username, rated=True, clock_limit=limit, clock_increment=inc)
                 time.sleep(40)  
             else:
                 time.sleep(10)
-                
         except Exception as e:
-            print(f"⚠️ Ошибка в потоке вызовов: {e}")
             time.sleep(15)
 
 def handle_game(game_id):
-    """ Изолированный поток для ведения конкретной партии """
+    """ Изолированный поток для ведения конкретной партии с записью истории ходов """
     global active_games, sent_welcomes, sent_goodbyes
     print(f"⚔️ Поток для партии {game_id} успешно запущен!")
     
     board = chess.Board()
     moves = []
     my_color = None
+    
+    # Сюда пишем историю: (FEN до нашего хода, сам сделанный ход в формате UCI)
+    my_moves_history = [] 
 
     try:
         for state in client.bots.stream_game_state(game_id):
@@ -205,7 +261,6 @@ def handle_game(game_id):
                 
                 print(f"[{game_id}] Я играю {'белыми' if my_color == chess.WHITE else 'чёрными'}")
                 
-                # ИСПРАВЛЕНО: Сначала блокируем повторы, занося в базу, а потом пишем
                 if game_id not in sent_welcomes:
                     sent_welcomes.add(game_id)
                     try:
@@ -230,7 +285,16 @@ def handle_game(game_id):
                 if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
                     print(f"[{game_id}] Партия завершена. Статус: {status}")
                     
-                    # ИСПРАВЛЕНО: Защита от дублей прощания
+                    # --- АНАЛИЗ РЕЗУЛЬТАТА И ОБУЧЕНИЕ ---
+                    winner = game_data.get('winner') # 'white' или 'black'
+                    if winner:
+                        i_lost = (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE)
+                        if i_lost and my_moves_history:
+                            # Берем самый последний сделанный нами ход в этой партии
+                            bad_fen, bad_move = my_moves_history[-1]
+                            save_bad_move(bad_fen, bad_move)
+                            print(f"❌ Партия проиграна. Бот запомнил роковую ошибку: {bad_move}")
+                    
                     if game_id not in sent_goodbyes:
                         sent_goodbyes.add(game_id)
                         try:
@@ -240,34 +304,36 @@ def handle_game(game_id):
                     break
 
             if my_color is not None and board.turn == my_color and not board.is_game_over():
-                print(f"[{game_id}] Мой ход, вычисляю движком...")
+                current_fen = board.fen() # Сохраняем позицию до вычисления хода
+                
                 move = find_best_move(board, depth=3)
                 if move:
+                    move_uci = move.uci()
                     time.sleep(0.1)
                     try:
-                        client.bots.make_move(game_id, move.uci())
-                        print(f"[{game_id}] Сделал ход: {move.uci()}")
+                        client.bots.make_move(game_id, move_uci)
+                        # Записываем в локальную историю потока
+                        my_moves_history.append((current_fen, move_uci))
+                        print(f"[{game_id}] Сделал ход: {move_uci}")
                     except Exception as m_err:
                         print(f"⚠️ Не удалось отправить ход: {m_err}")
 
     except Exception as e:
-        print(f"💥 Критическая ошибка в потоке игры {game_id}: {e}")
+        print(f"💥 Критическая ошибка в игре {game_id}: {e}")
     finally:
-        # ИСПРАВЛЕНО: Удаляем игру ТОЛЬКО из активных слотов, чтобы освободить место.
-        # Списки sent_welcomes и sent_goodbyes здесь больше НЕ очищаем!
         active_games.discard(game_id)
         print(f"🏁 Поток партии {game_id} закрыт. Свободно слотов: {MAX_CONCURRENT_GAMES - len(active_games)}")
 
-# ================= 3. ГЛАВНЫЙ СЛУШАТЕЛЬ СЕРВЕРА =================
+# ================= 3. ЗАПУСК БОТА =================
 
-print(f"Бот {my_username} онлайн. Начинаем одновременный фарм на {MAX_CONCURRENT_GAMES} досках!")
+load_memory() # Подгружаем базу данных ошибок
+print(f"Бот {my_username} онлайн. Начинаем фарм с функцией самообучения!")
 
 threading.Thread(target=auto_challenger, daemon=True).start()
 
 while True:
     try:
         for event in client.bots.stream_incoming_events():
-            
             if event.get('type') == 'challenge':
                 challenge_id = event.get('challenge', {}).get('id')
                 challenger = event.get('challenge', {}).get('challenger', {}).get('id', 'Unknown')
@@ -275,7 +341,7 @@ while True:
                 if challenge_id:
                     if len(active_games) < MAX_CONCURRENT_GAMES:
                         client.bots.accept_challenge(challenge_id)
-                        print(f"📥 Приняли входящий вызов от {challenger}! (Игр запущено: {len(active_games) + 1})")
+                        print(f"📥 Приняли входящий вызов от {challenger}!")
                     else:
                         client.bots.decline_challenge(challenge_id, reason='later')
 
