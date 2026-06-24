@@ -2,56 +2,123 @@ import time
 import berserk
 import chess
 
-# ================= 1. ШАХМАТНЫЙ ДВИЖОК =================
+# ================= 1. УМНЫЙ ШАХМАТНЫЙ ДВИЖОК =================
+
 def evaluate_board(board):
+    """ Оценка позиции на доске с учетом материала и геометрии """
     piece_values = {
-        chess.PAWN: 1,
-        chess.KNIGHT: 3,
-        chess.BISHOP: 3,
-        chess.ROOK: 5,
-        chess.QUEEN: 9,
-        chess.KING: 0
+        chess.PAWN: 1.0,
+        chess.KNIGHT: 3.0,
+        chess.BISHOP: 3.0,
+        chess.ROOK: 5.0,
+        chess.QUEEN: 9.0,
+        chess.KING: 0.0
     }
-    score = 0
+    
+    score = 0.0
+    
     for square in chess.SQUARES:
         piece = board.piece_at(square)
         if piece:
+            # Базовая ценность фигуры
+            val = piece_values[piece.piece_type]
+            
+            # --- ПОЗИЦИОННАЯ ЛОГИКА (ЦЕНТР И РАЗВИТИЕ) ---
+            row = chess.square_rank(square)  # 0-7
+            col = chess.square_file(square)  # 0-7
+            
+            # Расстояние до центра (чем меньше, тем лучше фигуре в центре)
+            dist_from_center = abs(3.5 - row) + abs(3.5 - col)
+            center_bonus = (8.0 - dist_from_center) * 0.05  # макс +0.4 за идеальный центр
+            
+            if piece.piece_type == chess.PAWN:
+                # Пешкам важно идти вперед
+                pawn_bonus = row * 0.1 if piece.color == chess.WHITE else (7 - row) * 0.1
+                val += (center_bonus + pawn_bonus)
+            elif piece.piece_type in [chess.KNIGHT, chess.BISHOP]:
+                # Коням и слонам критически важен центр
+                val += center_bonus
+                
+            # Суммируем (Белым в плюс, Черным в минус)
             if piece.color == chess.WHITE:
-                score += piece_values[piece.piece_type]
+                score += val
             else:
-                score -= piece_values[piece.piece_type]
+                score -= val
+                
     return score
 
-def minimax(board, depth, is_maximizing):
-    if depth == 0 or board.is_game_over():
+def minimax(board, depth, alpha, beta, is_maximizing):
+    """ Минимакс с альфа-бета отсечением и оценкой терминальных состояний """
+    if board.is_game_over():
+        outcome = board.outcome()
+        if outcome.winner == chess.WHITE:
+            return 10000.0 + depth  # Белые победили (быстрее = лучше)
+        elif outcome.winner == chess.BLACK:
+            return -10000.0 - depth # Черные победили
+        return 0.0  # Ничья
+
+    if depth == 0:
         return evaluate_board(board)
+
+    # Оптимизация: сначала проверяем взятия (они чаще всего вызывают отсечения)
+    ordered_moves = sorted(board.legal_moves, key=lambda m: board.is_capture(m), reverse=True)
+
     if is_maximizing:
         best = -float('inf')
-        for move in board.legal_moves:
+        for move in ordered_moves:
             board.push(move)
-            val = minimax(board, depth-1, False)
+            val = minimax(board, depth - 1, alpha, beta, False)
             board.pop()
             best = max(best, val)
+            alpha = max(alpha, best)
+            if beta <= alpha:
+                break  # Отсечение ветки
         return best
     else:
         best = float('inf')
-        for move in board.legal_moves:
+        for move in ordered_moves:
             board.push(move)
-            val = minimax(board, depth-1, True)
+            val = minimax(board, depth - 1, alpha, beta, True)
             board.pop()
             best = min(best, val)
+            beta = min(beta, best)
+            if beta <= alpha:
+                break  # Отсечение ветки
         return best
 
 def find_best_move(board, depth):
+    """ Ищет лучший ход в зависимости от текущего цвета бота """
     best_move = None
-    best_score = -float('inf')
-    for move in board.legal_moves:
-        board.push(move)
-        score = minimax(board, depth-1, False)
-        board.pop()
-        if score > best_score:
-            best_score = score
-            best_move = move
+    my_color = board.turn
+    
+    # Сортируем ходы для ускорения первого слоя
+    ordered_moves = sorted(board.legal_moves, key=lambda m: board.is_capture(m), reverse=True)
+    
+    alpha = -float('inf')
+    beta = float('inf')
+
+    if my_color == chess.WHITE:
+        best_score = -float('inf')
+        for move in ordered_moves:
+            board.push(move)
+            score = minimax(board, depth - 1, alpha, beta, False)
+            board.pop()
+            if score > best_score:
+                best_score = score
+                best_move = move
+            alpha = max(alpha, best_score)
+    else:
+        # Исправлено: если мы черные, мы МИНИМИЗИРУЕМ счет белых
+        best_score = float('inf')
+        for move in ordered_moves:
+            board.push(move)
+            score = minimax(board, depth - 1, alpha, beta, True)
+            board.pop()
+            if score < best_score:
+                best_score = score
+                best_move = move
+            beta = min(beta, best_score)
+            
     return best_move
 
 # ================= 2. ПОДКЛЮЧЕНИЕ И ИГРОВОЙ ЦИКЛ =================
@@ -62,7 +129,7 @@ client = berserk.Client(session)
 
 my_username = client.account.get()['username']
 print(f"Я бот {my_username}")
-print("Мой бот запущен и ждет игр!")
+print("Мой бот запущен и готов побеждать!")
 
 while True:
     try:
@@ -85,7 +152,6 @@ while True:
                         state_type = state.get('type')
                         game_data = None
 
-                        # Извлекаем актуальные ходы и статус в зависимости от типа события
                         if state_type == 'gameFull':
                             white_id = state.get('white', {}).get('id', '')
                             black_id = state.get('black', {}).get('id', '')
@@ -95,33 +161,30 @@ while True:
                                 my_color = chess.BLACK
                             
                             print(f"Я играю {'белыми' if my_color == chess.WHITE else 'чёрными'}")
-                            game_data = state.get('state', {}) # Ходы в gameFull лежат внутри 'state'
+                            game_data = state.get('state', {})
                         
                         elif state_type == 'gameState':
                             game_data = state
 
-                        # Обновляем доску (работает и для gameFull, и для gameState)
                         if game_data:
                             raw_moves = game_data.get('moves', '')
                             all_moves = raw_moves.split() if raw_moves else []
                             
-                            # Накатываем новые ходы
                             while len(moves) < len(all_moves):
                                 board.push_uci(all_moves[len(moves)])
                                 moves.append(all_moves[len(moves)-1])
 
-                            # Проверяем статус завершения игры
                             status = game_data.get('status')
                             if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
                                 print(f"Игра {game_id} завершена (статус: {status})")
                                 break
 
-                        # Делаем ход (теперь срабатывает СРАЗУ на gameFull, если мы белые)
+                        # Делаем ход (благодаря оптимизации ставим depth=3!)
                         if my_color is not None and board.turn == my_color and not board.is_game_over():
                             print("Мой ход! Думаю...")
-                            move = find_best_move(board, depth=2)
+                            move = find_best_move(board, depth=3)
                             if move:
-                                time.sleep(0.2)  # Небольшая пауза для стабильности
+                                time.sleep(0.1)
                                 client.bots.make_move(game_id, move.uci())
                                 print(f"Сделал ход: {move.uci()}")
 
