@@ -1,4 +1,5 @@
 import time
+import random  # <--- Добавили для случайности в дебютах
 import berserk
 import chess
 
@@ -20,26 +21,21 @@ def evaluate_board(board):
     for square in chess.SQUARES:
         piece = board.piece_at(square)
         if piece:
-            # Базовая ценность фигуры
             val = piece_values[piece.piece_type]
             
             # --- ПОЗИЦИОННАЯ ЛОГИКА (ЦЕНТР И РАЗВИТИЕ) ---
             row = chess.square_rank(square)  # 0-7
             col = chess.square_file(square)  # 0-7
             
-            # Расстояние до центра (чем меньше, тем лучше фигуре в центре)
             dist_from_center = abs(3.5 - row) + abs(3.5 - col)
-            center_bonus = (8.0 - dist_from_center) * 0.05  # макс +0.4 за идеальный центр
+            center_bonus = (8.0 - dist_from_center) * 0.05
             
             if piece.piece_type == chess.PAWN:
-                # Пешкам важно идти вперед
                 pawn_bonus = row * 0.1 if piece.color == chess.WHITE else (7 - row) * 0.1
                 val += (center_bonus + pawn_bonus)
             elif piece.piece_type in [chess.KNIGHT, chess.BISHOP]:
-                # Коням и слонам критически важен центр
                 val += center_bonus
                 
-            # Суммируем (Белым в плюс, Черным в минус)
             if piece.color == chess.WHITE:
                 score += val
             else:
@@ -48,19 +44,18 @@ def evaluate_board(board):
     return score
 
 def minimax(board, depth, alpha, beta, is_maximizing):
-    """ Минимакс с альфа-бета отсечением и оценкой терминальных состояний """
+    """ Минимакс с альфа-бета отсечением """
     if board.is_game_over():
         outcome = board.outcome()
         if outcome.winner == chess.WHITE:
-            return 10000.0 + depth  # Белые победили (быстрее = лучше)
+            return 10000.0 + depth
         elif outcome.winner == chess.BLACK:
-            return -10000.0 - depth # Черные победили
-        return 0.0  # Ничья
+            return -10000.0 - depth
+        return 0.0
 
     if depth == 0:
         return evaluate_board(board)
 
-    # Оптимизация: сначала проверяем взятия (они чаще всего вызывают отсечения)
     ordered_moves = sorted(board.legal_moves, key=lambda m: board.is_capture(m), reverse=True)
 
     if is_maximizing:
@@ -72,7 +67,7 @@ def minimax(board, depth, alpha, beta, is_maximizing):
             best = max(best, val)
             alpha = max(alpha, best)
             if beta <= alpha:
-                break  # Отсечение ветки
+                break
         return best
     else:
         best = float('inf')
@@ -83,17 +78,21 @@ def minimax(board, depth, alpha, beta, is_maximizing):
             best = min(best, val)
             beta = min(beta, best)
             if beta <= alpha:
-                break  # Отсечение ветки
+                break
         return best
 
 def find_best_move(board, depth):
-    """ Ищет лучший ход в зависимости от текущего цвета бота """
-    best_move = None
+    """ Ищет лучший ход с защитой от повторяющихся партий """
     my_color = board.turn
     
-    # Сортируем ходы для ускорения первого слоя
-    ordered_moves = sorted(board.legal_moves, key=lambda m: board.is_capture(m), reverse=True)
+    # Хитрый трюк: превращаем ходы в список и перемешиваем их
+    legal_moves_list = list(board.legal_moves)
+    random.shuffle(legal_moves_list)
     
+    # Стабильная сортировка в Python сохранит случайный порядок среди ходов с одинаковым приоритетом (например, среди не-взятий)
+    ordered_moves = sorted(legal_moves_list, key=lambda m: board.is_capture(m), reverse=True)
+    
+    best_move = None
     alpha = -float('inf')
     beta = float('inf')
 
@@ -108,7 +107,6 @@ def find_best_move(board, depth):
                 best_move = move
             alpha = max(alpha, best_score)
     else:
-        # Исправлено: если мы черные, мы МИНИМИЗИРУЕМ счет белых
         best_score = float('inf')
         for move in ordered_moves:
             board.push(move)
@@ -179,7 +177,6 @@ while True:
                                 print(f"Игра {game_id} завершена (статус: {status})")
                                 break
 
-                        # Делаем ход (благодаря оптимизации ставим depth=3!)
                         if my_color is not None and board.turn == my_color and not board.is_game_over():
                             print("Мой ход! Думаю...")
                             move = find_best_move(board, depth=3)
