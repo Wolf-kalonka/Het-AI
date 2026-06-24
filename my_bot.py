@@ -123,12 +123,11 @@ client = berserk.Client(session)
 my_username = client.account.get()['username']
 my_id = client.account.get()['id']
 
-# --- НАСТРОЙКА ОДНОВРЕМЕННЫХ ИГР ---
-MAX_CONCURRENT_GAMES = 2  # Теперь бот может играть 2 партии одновременно!
+MAX_CONCURRENT_GAMES = 2  
 
 active_games = set()
-sent_welcomes = set()   # Глобальный трекер, чтобы не спамить приветствиями
-sent_goodbyes = set()   # Глобальный трекер для прощаний
+sent_welcomes = set()   # Теперь эти списки никогда не очищаются во время сессии
+sent_goodbyes = set()   
 
 def auto_challenger():
     """ Фоновый поток: ищет соперников, пока лимит одновременных партий не исчерпан """
@@ -137,7 +136,6 @@ def auto_challenger():
     
     while True:
         try:
-            # Если мы уже достигли лимита одновременных партий — отдыхаем
             if len(active_games) >= MAX_CONCURRENT_GAMES:
                 time.sleep(5)
                 continue
@@ -175,7 +173,7 @@ def auto_challenger():
             if target_username and len(active_games) < MAX_CONCURRENT_GAMES:
                 print(f"🔥 Отправляем РЕЙТИНГОВЫЙ вызов к @{target_username} ({limit // 60}+{inc})")
                 client.challenges.create(username=target_username, rated=True, clock_limit=limit, clock_increment=inc)
-                time.sleep(40)  # Ждем ответа 40 секунд перед следующим поиском
+                time.sleep(40)  
             else:
                 time.sleep(10)
                 
@@ -207,11 +205,11 @@ def handle_game(game_id):
                 
                 print(f"[{game_id}] Я играю {'белыми' if my_color == chess.WHITE else 'чёрными'}")
                 
-                # Фикс дублирования: проверяем по глобальному сету
+                # ИСПРАВЛЕНО: Сначала блокируем повторы, занося в базу, а потом пишем
                 if game_id not in sent_welcomes:
+                    sent_welcomes.add(game_id)
                     try:
                         client.bots.post_message(game_id, "Привет! Приятной рейтинговой игры! 😊 Удачи!")
-                        sent_welcomes.add(game_id)
                     except Exception:
                         pass
                         
@@ -232,11 +230,11 @@ def handle_game(game_id):
                 if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
                     print(f"[{game_id}] Партия завершена. Статус: {status}")
                     
-                    # Фикс дублирования прощания
+                    # ИСПРАВЛЕНО: Защита от дублей прощания
                     if game_id not in sent_goodbyes:
+                        sent_goodbyes.add(game_id)
                         try:
                             client.bots.post_message(game_id, "Спасибо за партию! Хорошая игра! GG WP 🤝")
-                            sent_goodbyes.add(game_id)
                         except Exception:
                             pass
                     break
@@ -255,44 +253,36 @@ def handle_game(game_id):
     except Exception as e:
         print(f"💥 Критическая ошибка в потоке игры {game_id}: {e}")
     finally:
-        # Освобождаем слот игры
+        # ИСПРАВЛЕНО: Удаляем игру ТОЛЬКО из активных слотов, чтобы освободить место.
+        # Списки sent_welcomes и sent_goodbyes здесь больше НЕ очищаем!
         active_games.discard(game_id)
-        # Очищаем память от старых ID, чтобы логи не раздувались
-        sent_welcomes.discard(game_id)
-        sent_goodbyes.discard(game_id)
         print(f"🏁 Поток партии {game_id} закрыт. Свободно слотов: {MAX_CONCURRENT_GAMES - len(active_games)}")
 
 # ================= 3. ГЛАВНЫЙ СЛУШАТЕЛЬ СЕРВЕРА =================
 
 print(f"Бот {my_username} онлайн. Начинаем одновременный фарм на {MAX_CONCURRENT_GAMES} досках!")
 
-# Запускаем фонового зазывалу
 threading.Thread(target=auto_challenger, daemon=True).start()
 
 while True:
     try:
         for event in client.bots.stream_incoming_events():
             
-            # Обработка входящих дуэлей
             if event.get('type') == 'challenge':
                 challenge_id = event.get('challenge', {}).get('id')
                 challenger = event.get('challenge', {}).get('challenger', {}).get('id', 'Unknown')
                 
                 if challenge_id:
-                    # Принимаем, только если текущих игр меньше лимита
                     if len(active_games) < MAX_CONCURRENT_GAMES:
                         client.bots.accept_challenge(challenge_id)
                         print(f"📥 Приняли входящий вызов от {challenger}! (Игр запущено: {len(active_games) + 1})")
                     else:
                         client.bots.decline_challenge(challenge_id, reason='later')
-                        print(f"⏳ Отклонили вызов от {challenger}, так как достигнут лимит в {MAX_CONCURRENT_GAMES} игры.")
 
-            # Старт игры (неважно, наш вызов приняли или мы чужой)
             elif event.get('type') == 'gameStart':
                 game_id = event.get('game', {}).get('id')
                 if game_id not in active_games and len(active_games) < MAX_CONCURRENT_GAMES:
                     active_games.add(game_id)
-                    # Спавним отдельный изолированный поток для этой доски
                     threading.Thread(target=handle_game, args=(game_id,), daemon=True).start()
 
     except Exception as e:
