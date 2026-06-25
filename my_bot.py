@@ -5,8 +5,28 @@ import json
 import os
 import berserk
 import chess
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# ================= 1. ДЕБЮТНЫЕ КНИГИ (OPENING BOOKS) =================
+# ================= МГНОВЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER =================
+
+class SimpleKeepAliveServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(b"Het-AI is alive and kicking!")
+
+    def log_message(self, format, *args):
+        return  # Отключаем спам в консоль
+
+def start_web_server():
+    # Render дает порт в переменной PORT. Если её нет, берем 8080
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleKeepAliveServer)
+    print(f"🌐 [Web Server] Порт {port} открыт! Render доволен.")
+    server.serve_forever()
+
+# ================= ДЕБЮТНЫЕ КНИГИ =================
 
 OPENING_BOOK = {
     "": ["e2e4", "d2d4", "g1f3", "c4c4"],
@@ -24,10 +44,11 @@ OPENING_BOOK = {
     "c4c4": ["e7e5", "c7c5"],
     "e2e4 c7c5 g1f3": ["d7d6", "b8c6"],
     "e2e4 c7c5 g1f3 d7d6 d2d4": ["c5d4"],
+    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4": ["g8f6"],
     "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3": ["a7a6", "g7g6"],
 }
 
-# ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ =================
+# ================= ПОЗИЦИОННЫЕ МАТРИЦЫ =================
 
 PAWN_PST = [
     0,  0,  0,  0,  0,  0,  0,  0,
@@ -73,7 +94,7 @@ KING_PST = [
      2,  3,  1,  0,  0,  1,  3,  2
 ]
 
-# ================= 3. ДВИЖОК И ПАМЯТЬ =================
+# ================= ДИСТАНЦИОННАЯ ПАМЯТЬ =================
 
 MEMORY_FILE = "bot_memory.json"
 memory_lock = threading.Lock()
@@ -85,7 +106,6 @@ def load_memory():
         try:
             with open(MEMORY_FILE, 'r', encoding='utf-8') as f:
                 bad_moves_db = json.load(f)
-            print(f"🧠 Память загружена! Найдено позиций с ошибками: {len(bad_moves_db)}")
         except Exception:
             bad_moves_db = {}
 
@@ -97,7 +117,6 @@ def save_bad_move(fen, move_uci):
             bad_moves_db[short_fen] = []
         if move_uci not in bad_moves_db[short_fen]:
             bad_moves_db[short_fen].append(move_uci)
-            print(f"💾 Ошибка {move_uci} сохранена.")
             try:
                 with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
                     json.dump(bad_moves_db, f, indent=4, ensure_ascii=False)
@@ -165,9 +184,7 @@ def find_best_move(board, depth):
             book_choices = OPENING_BOOK[move_history]
             legal_book = [chess.Move.from_uci(m) for m in book_choices if chess.Move.from_uci(m) in board.legal_moves]
             if legal_book:
-                chosen = random.choice(legal_book)
-                print(f"📖 [Книга] Ход: {chosen.uci()}")
-                return chosen, evaluate_board(board)
+                return random.choice(legal_book), evaluate_board(board)
 
     short_fen = " ".join(board.fen().split()[:3])
     legal_moves_list = list(board.legal_moves)
@@ -205,138 +222,97 @@ def find_best_move(board, depth):
             
     if not best_move and legal_moves_list:
         best_move = random.choice(legal_moves_list)
-        best_score = evaluate_board(board)
-    return best_move, best_score
+    return best_move, evaluate_board(board)
 
-# ================= 4. LICHESS СЕТЬ =================
+# ================= ШАХМАТНЫЙ ЦИКЛ LICHESS =================
 
 TOKEN = "lip_XG5jv7YWcOFKO1Sg6RRG"
-session = berserk.TokenSession(TOKEN)
-client = berserk.Client(session)
 
-my_username = client.account.get()['username']
-my_id = client.account.get()['id']
-
-MAX_CONCURRENT_GAMES = 2  
-active_games = set()
-sent_welcomes = set()   
-
-def auto_challenger():
-    print(f"📡 Авто-поиск запущен!")
-    time.sleep(5)
-    while True:
-        try:
-            if len(active_games) >= MAX_CONCURRENT_GAMES:
-                time.sleep(5)
-                continue
-            time_controls = [(180, 2), (300, 0), (300, 3)]
-            limit, inc = random.choice(time_controls)
-            variant = random.choice(['standard', 'chess960'])
-            
-            online_bots = list(client.bots.get_online_bots())
-            valid_bots = [b['id'] for b in online_bots if b.get('id') != my_id]
-            if valid_bots:
-                target_username = random.choice(valid_bots)
-                print(f"🔥 Вызов к @{target_username} ({variant.upper()})")
-                client.challenges.create(username=target_username, rated=True, clock_limit=limit, clock_increment=inc, variant=variant)
-                time.sleep(40)  
-            else: time.sleep(10)
-        except Exception: time.sleep(15)
-
-def handle_game(game_id):
-    global active_games, sent_welcomes
-    print(f"⚔️ Старт потока для игры {game_id}")
-    board = None
-    moves = []
-    my_color = None
-    my_moves_history = [] 
-    draw_offered_by_me = False 
-
-    try:
-        for state in client.bots.stream_game_state(game_id):
-            state_type = state.get('type')
-            game_data = None
-
-            if state_type == 'gameFull':
-                variant_key = state.get('variant', {}).get('key', 'standard')
-                is_chess960 = (variant_key == 'chess960')
-                initial_fen = state.get('initialFen', chess.STARTING_FEN)
-                if initial_fen == 'startpos': initial_fen = chess.STARTING_FEN
-                
-                board = chess.Board(initial_fen, chess960=is_chess960)
-                white_id = state.get('white', {}).get('id', '')
-                black_id = state.get('black', {}).get('id', '')
-                if white_id.lower() == my_username.lower(): my_color = chess.WHITE
-                elif black_id.lower() == my_username.lower(): my_color = chess.BLACK
-                
-                if game_id not in sent_welcomes:
-                    sent_welcomes.add(game_id)
-                    try: client.bots.post_message(game_id, "Привет! Сыграем! 😊")
-                    except Exception: pass
-                game_data = state.get('state', {})
-            
-            elif state_type == 'gameState': game_data = state
-
-            if game_data and board is not None:
-                raw_moves = game_data.get('moves', '')
-                all_moves = raw_moves.split() if raw_moves else []
-                while len(moves) < len(all_moves):
-                    board.push_uci(all_moves[len(moves)])
-                    moves.append(all_moves[len(moves)-1])
-
-                status = game_data.get('status')
-                if status in ['mate', 'resign', 'draw', 'stalemate', 'timeout', 'outoftime', 'aborted']:
-                    winner = game_data.get('winner') 
-                    if winner and my_moves_history:
-                        if (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE):
-                            bad_fen, bad_move = my_moves_history[-1]
-                            save_bad_move(bad_fen, bad_move)
-                    break
-
-            if board is not None and my_color is not None and board.turn == my_color and not board.is_game_over():
-                current_fen = board.fen() 
-                move, score = find_best_move(board, depth=3)
-                my_score = score if my_color == chess.WHITE else -score
-                print(f"📈 [{game_id}] Оценка: {f'{my_score:+.2f}' if abs(my_score) < 5000 else 'МАТ'}")
-                
-                if my_score < -2.5 and not draw_offered_by_me:
-                    try:
-                        client.bots.handle_draw(game_id, accept=True)
-                        draw_offered_by_me = True
-                    except Exception: pass
-                
-                if move:
-                    move_uci = move.uci()
-                    time.sleep(0.1)
-                    try:
-                        client.bots.make_move(game_id, move_uci)
-                        my_moves_history.append((current_fen, move_uci))
-                    except Exception: pass
-    except Exception: pass
-    finally: active_games.discard(game_id)
-
-# ================= 5. ГЛАВНЫЙ ЗАПУСК =================
-
-if __name__ == '__main__':
+def run_chess_bot():
     load_memory()
-    print(f"🚀 Робот {my_username} успешно запущен в режиме Background Worker!")
+    session = berserk.TokenSession(TOKEN)
+    client = berserk.Client(session)
     
+    my_username = client.account.get()['username']
+    my_id = client.account.get()['id']
+    print(f"🚀 Шахматный бот {my_username} успешно авторизован!")
+
+    active_games = set()
+    MAX_CONCURRENT_GAMES = 2
+
+    # Поток авто-вызовов
+    def auto_challenger():
+        while True:
+            try:
+                if len(active_games) < MAX_CONCURRENT_GAMES:
+                    online_bots = [b['id'] for b in client.bots.get_online_bots() if b.get('id') != my_id]
+                    if online_bots:
+                        target = random.choice(online_bots)
+                        client.challenges.create(username=target, rated=True, clock_limit=180, clock_increment=2, variant='standard')
+                time.sleep(30)
+            except Exception: time.sleep(10)
+
     threading.Thread(target=auto_challenger, daemon=True).start()
 
+    # Поток обработки конкретной игры
+    def handle_game(game_id):
+        try:
+            board = None
+            my_color = None
+            moves_count = 0
+            my_history = []
+            
+            for state in client.bots.stream_game_state(game_id):
+                if state.get('type') == 'gameFull':
+                    board = chess.Board(state.get('initialFen', chess.STARTING_FEN))
+                    white_id = state.get('white', {}).get('id', '')
+                    my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
+                    game_state = state.get('state', {})
+                else:
+                    game_state = state
+
+                raw_moves = game_state.get('moves', '').split()
+                while moves_count < len(raw_moves):
+                    board.push_uci(raw_moves[moves_count])
+                    moves_count += 1
+
+                if game_state.get('status') in ['mate', 'resign', 'draw', 'timeout']:
+                    if game_state.get('winner') and my_history:
+                        if (game_state['winner'] == 'white' and my_color == chess.BLACK) or (game_state['winner'] == 'black' and my_color == chess.WHITE):
+                            save_bad_move(my_history[-1][0], my_history[-1][1])
+                    break
+
+                if board.turn == my_color and not board.is_game_over():
+                    current_fen = board.fen()
+                    move, _ = find_best_move(board, depth=3)
+                    if move:
+                        try:
+                            client.bots.make_move(game_id, move.uci())
+                            my_history.append((current_fen, move.uci()))
+                        except Exception: pass
+        except Exception: pass
+        finally: active_games.discard(game_id)
+
+    # Поток прослушивания событий
     while True:
         try:
             for event in client.bots.stream_incoming_events():
                 if event.get('type') == 'challenge':
-                    challenge_id = event.get('challenge', {}).get('id')
-                    v_name = event.get('challenge', {}).get('variant', {}).get('key', 'standard')
-                    if challenge_id and v_name in ['standard', 'chess960']:
-                        if len(active_games) < MAX_CONCURRENT_GAMES: client.bots.accept_challenge(challenge_id)
-                        else: client.bots.decline_challenge(challenge_id, reason='later')
-
+                    c_id = event['challenge']['id']
+                    if len(active_games) < MAX_CONCURRENT_GAMES: client.bots.accept_challenge(c_id)
+                    else: client.bots.decline_challenge(c_id)
                 elif event.get('type') == 'gameStart':
-                    game_id = event.get('game', {}).get('id')
-                    if game_id not in active_games and len(active_games) < MAX_CONCURRENT_GAMES:
-                        active_games.add(game_id)
-                        threading.Thread(target=handle_game, args=(game_id,), daemon=True).start()
-        except Exception:
-            time.sleep(5)
+                    g_id = event['game']['id']
+                    if g_id not in active_games:
+                        active_games.add(g_id)
+                        threading.Thread(target=handle_game, args=(g_id,), daemon=True).start()
+        except Exception: time.sleep(5)
+
+# ================= ТОЧКА ВХОДА =================
+
+if __name__ == '__main__':
+    # 1. ЗАПУСКАЕМ ШАХМАТЫ В ФОНЕ
+    threading.Thread(target=run_chess_bot, daemon=True).start()
+    
+    # 2. НА ГЛАВНОМ ПОТОКЕ СРАЗУ ПОДНИМАЕМ ВЕБ-СЕРВЕР ДЛЯ RENDER
+    start_web_server()
