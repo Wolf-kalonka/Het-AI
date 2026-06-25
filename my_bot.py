@@ -226,7 +226,11 @@ def find_best_move(board, depth):
 
 # ================= ШАХМАТНЫЙ ЦИКЛ LICHESS =================
 
-TOKEN = "lip_XG5jv7YWcOFKO1Sg6RRG"
+TOKEN = os.environ.get("LICHESS_TOKEN")
+
+if not TOKEN:
+    print("❌ ОШИБКА: Переменная окружения LICHESS_TOKEN не найдена!")
+    exit(1)
 
 def run_chess_bot():
     load_memory()
