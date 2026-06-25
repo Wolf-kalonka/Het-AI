@@ -422,3 +422,9 @@ while True:
 
     except Exception as e:
         time.sleep(5)
+def run_web_server():
+    # Render передает строку, нужно убедиться, что мы слушаем на 0.0.0.0
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), KeepAliveHandler)
+    print(f"🌐 [Web Server] Успешно запущен на порту {port}!")
+    server.serve_forever()
