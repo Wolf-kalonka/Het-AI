@@ -315,8 +315,11 @@ def run_chess_bot():
 # ================= ТОЧКА ВХОДА =================
 
 if __name__ == '__main__':
-    # 1. ЗАПУСКАЕМ ШАХМАТЫ В ФОНЕ
-    threading.Thread(target=run_chess_bot, daemon=True).start()
+    load_memory()
     
-    # 2. НА ГЛАВНОМ ПОТОКЕ СРАЗУ ПОДНИМАЕМ ВЕБ-СЕРВЕР ДЛЯ RENDER
-    start_web_server()
+    # Запускаем бота напрямую. Скрипт замрёт на этой строчке 
+    # и будет бесконечно слушать Личесс, пока Гитхаб его не выключит.
+    try:
+        run_chess_bot()
+    except KeyboardInterrupt:
+        print("Бот остановлен вручную.")
