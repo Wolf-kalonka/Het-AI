@@ -9,7 +9,6 @@ on:
 
 jobs:
   run-bot:
-    runs-size: ubuntu-latest
     runs-on: ubuntu-latest
 
     steps:
