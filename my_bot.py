@@ -6,8 +6,9 @@ import os
 import traceback
 import berserk
 import chess
+import chess.polyglot
 
-# ================= 1. ДЕБЮТНЫЕ КНИГИ (OPENING BOOKS) =================
+# ================= 1. ТЕКСТОВЫЙ ДЕБЮТНЫЙ НАБОР (ФАЛЛБЭК) =================
 
 OPENING_BOOK = {
     "": ["e2e4", "d2d4", "g1f3", "c2c4"],
@@ -16,20 +17,16 @@ OPENING_BOOK = {
     "e2e4 e7e5 g1f3 b8c6": ["b1b5", "b1c4", "d2d4"],
     "e2e4 c7c5": ["g1f3", "b1c3"],
     "e2e4 c7c5 g1f3": ["d7d6", "e7e6", "b8c6"],
-    "e2e4 c7c5 g1f3 d7d6": ["d2d4"],
+    "e2e4 c7c5 g1f3 d7d6 d2d4": ["c5d4"],
     "d2d4 d7d5": ["c4c4"],
     "d2d4 d7d5 c4c4": ["e7e6", "c7c6"],
     "e2e4": ["c7c5", "e7e5", "e7e6", "c7c6"],
     "d2d4": ["d7d5", "g8f6"],
     "g1f3": ["d7d5", "g8f6"],
     "c4c4": ["e7e5", "c7c5"],
-    "e2e4 c7c5 g1f3": ["d7d6", "b8c6"],
-    "e2e4 c7c5 g1f3 d7d6 d2d4": ["c5d4"],
-    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4": ["g8f6"],
-    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3": ["a7a6", "g7g6"],
 }
 
-# ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ =================
+# ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ (PST) =================
 
 PAWN_PST = [
     0,  0,  0,  0,  0,  0,  0,  0,
@@ -64,7 +61,8 @@ BISHOP_PST = [
     -2, -1, -1, -1, -1, -1, -1, -2
 ]
 
-KING_PST = [
+# Миттельшпиль: Король прячется в углу за пешками
+KING_MIDDLEGAME_PST = [
     -3, -4, -4, -5, -5, -4, -4, -3,
     -3, -4, -4, -5, -5, -4, -4, -3,
     -3, -4, -4, -5, -5, -4, -4, -3,
@@ -75,7 +73,19 @@ KING_PST = [
      2,  3,  1,  0,  0,  1,  3,  2
 ]
 
-# ================= 3. ЛОКАЛЬНАЯ ПАМЯТЬ =================
+# Эндшпиль: Король обязан идти в центр атаковать и вести свои пешки
+KING_ENDGAME_PST = [
+    -5, -3, -2, -2, -2, -2, -3, -5,
+    -3, -1,  0,  0,  0,  0, -1, -3,
+    -3,  0,  2,  3,  3,  2,  0, -3,
+    -3,  0,  3,  4,  4,  3,  0, -3,
+    -3,  0,  3,  4,  4,  3,  0, -3,
+    -3,  0,  2,  3,  3,  2,  0, -3,
+    -3, -1,  0,  0,  0,  0, -1, -3,
+    -5, -3, -2, -2, -2, -2, -3, -5
+]
+
+# ================= 3. ЛОКАЛЬНАЯ ПАМЯТЬ ОШИБОК =================
 
 MEMORY_FILE = "bot_memory.json"
 memory_lock = threading.Lock()
@@ -87,9 +97,8 @@ def load_memory():
         try:
             with open(MEMORY_FILE, 'r', encoding='utf-8') as f:
                 bad_moves_db = json.load(f)
-            print(f"🧠 Память успешно загружена! Записей ошибок: {len(bad_moves_db)}")
-        except Exception as e:
-            print(f"⚠️ Не удалось прочитать файл памяти (запустимся с пустой): {e}")
+            print(f"🧠 База данных ошибок загружена. Записей: {len(bad_moves_db)}")
+        except Exception:
             bad_moves_db = {}
 
 def save_bad_move(fen, move_uci):
@@ -100,48 +109,114 @@ def save_bad_move(fen, move_uci):
             bad_moves_db[short_fen] = []
         if move_uci not in bad_moves_db[short_fen]:
             bad_moves_db[short_fen].append(move_uci)
-            print(f"💾 Фиксация ошибки! Ход {move_uci} отложен в черный список для FEN: {short_fen}")
+            print(f"💾 Ход {move_uci} занесен в черный список для позиции: {short_fen}")
             try:
                 with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
                     json.dump(bad_moves_db, f, indent=4, ensure_ascii=False)
-            except Exception as e:
-                print(f"⚠️ Ошибка записи файла памяти на диск: {e}")
+            except Exception:
+                pass
 
-# ================= 4. ДВИЖОК МИНИМАКСА =================
+# ================= 4. ФУНКЦИЯ ОЦЕНКИ И СТАДИИ ИГРЫ =================
 
 def evaluate_board(board):
+    if board.is_checkmate():
+        return -99999.0 if board.turn == chess.WHITE else 99999.0
+    if board.is_stalemate() or board.is_insufficient_material():
+        return 0.0
+
     piece_values = {
-        chess.PAWN: 1.0, chess.KNIGHT: 3.1, chess.BISHOP: 3.25,
-        chess.ROOK: 5.0, chess.QUEEN: 9.0, chess.KING: 0.0
+        chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+        chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 20000
     }
-    score = 0.0
+    
+    # Считаем количество тяжелых фигур для определения стадии игры
+    num_heavy_pieces = len(board.pieces(chess.QUEEN, chess.WHITE)) + len(board.pieces(chess.QUEEN, chess.BLACK)) + \
+                       len(board.pieces(chess.ROOK, chess.WHITE)) + len(board.pieces(chess.ROOK, chess.BLACK))
+    is_endgame = num_heavy_pieces <= 2
+
+    score = 0
     for square in chess.SQUARES:
         piece = board.piece_at(square)
         if piece:
             val = piece_values[piece.piece_type]
             idx = square if piece.color == chess.WHITE else chess.square_mirror(square)
+            
+            # Применяем PST матрицы для стандартных шахмат
             if not board.chess960:
-                if piece.piece_type == chess.PAWN: val += PAWN_PST[idx] * 0.1
-                elif piece.piece_type == chess.KNIGHT: val += KNIGHT_PST[idx] * 0.1
-                elif piece.piece_type == chess.BISHOP: val += BISHOP_PST[idx] * 0.1
-                elif piece.piece_type == chess.KING: val += KING_PST[idx] * 0.1
+                if piece.piece_type == chess.PAWN: val += PAWN_PST[idx]
+                elif piece.piece_type == chess.KNIGHT: val += KNIGHT_PST[idx]
+                elif piece.piece_type == chess.BISHOP: val += BISHOP_PST[idx]
+                elif piece.piece_type == chess.KING:
+                    val += KING_ENDGAME_PST[idx] if is_endgame else KING_MIDDLEGAME_PST[idx]
+            
+            if piece.color == chess.WHITE:
+                score += val
             else:
-                row, col = chess.square_rank(square), chess.square_file(square)
-                if 2 <= row <= 5 and 2 <= col <= 5: val += 0.15
-            if piece.color == chess.WHITE: score += val
-            else: score -= val
-    return score
+                score -= val
+                
+    return score / 100.0
+
+# ================= 5. ПРЕДВАРИТЕЛЬНАЯ СОРТИРОВКА ХОДОВ =================
+
+def score_move(board, move):
+    # Реализация базового правила MVV-LVA (Ценность жертвы / Ценность атакующего)
+    if board.is_capture(move):
+        attacker = board.piece_at(move.from_square)
+        target = board.piece_at(move.to_square)
+        attacker_val = attacker.piece_type if attacker else 1
+        target_val = target.piece_type if target else 1
+        return 1000 + (target_val * 10 - attacker_val)
+    if board.gives_check(move):
+        return 500
+    return 0
+
+# ================= 6. ПОИСК ЗАТИШЬЯ (QUIESCENCE SEARCH) =================
+
+def quiescence(board, alpha, beta):
+    # Базовая оценка "тихой" позиции
+    stand_pat = evaluate_board(board)
+    if board.turn == chess.WHITE:
+        if stand_pat >= beta: return beta
+        if alpha < stand_pat: alpha = stand_pat
+        
+        # Проверяем только взятия фигур, чтобы не пропустить тактический зевок
+        capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
+        ordered_captures = sorted(capture_moves, key=lambda m: score_move(board, m), reverse=True)
+        
+        for move in ordered_captures:
+            board.push(move)
+            score = quiescence(board, alpha, beta)
+            board.pop()
+            if score >= beta: return beta
+            if score > alpha: alpha = score
+        return alpha
+    else:
+        if stand_pat <= alpha: return alpha
+        if beta > stand_pat: beta = stand_pat
+        
+        capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
+        ordered_captures = sorted(capture_moves, key=lambda m: score_move(board, m), reverse=True)
+        
+        for move in ordered_captures:
+            board.push(move)
+            score = quiescence(board, alpha, beta)
+            board.pop()
+            if score <= alpha: return alpha
+            if score < beta: beta = score
+        return beta
+
+# ================= 7. ОСНОВНОЙ АЛЬФА-БЕТА ПОИСК =================
 
 def minimax(board, depth, alpha, beta, is_maximizing):
-    if board.is_repetition(3): return 0.0
-    if board.is_game_over():
-        outcome = board.outcome()
-        if outcome and outcome.winner == chess.WHITE: return 10000.0 + depth
-        elif outcome and outcome.winner == chess.BLACK: return -10000.0 - depth
+    if board.is_repetition(3): 
         return 0.0
-    if depth == 0: return evaluate_board(board)
+    if board.is_game_over() or depth == 0:
+        # Вместо резкой остановки запускаем поиск затишья для просчета всех взятий
+        return quiescence(board, alpha, beta)
 
-    ordered_moves = sorted(board.legal_moves, key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
+    # Сортируем ходы, ускоряя альфа-бета отсечение в разы
+    ordered_moves = sorted(board.legal_moves, key=lambda m: score_move(board, m), reverse=True)
+
     if is_maximizing:
         best = -float('inf')
         for move in ordered_moves:
@@ -150,7 +225,8 @@ def minimax(board, depth, alpha, beta, is_maximizing):
             board.pop()
             best = max(best, val)
             alpha = max(alpha, best)
-            if beta <= alpha: break
+            if beta <= alpha: 
+                break
         return best
     else:
         best = float('inf')
@@ -160,11 +236,28 @@ def minimax(board, depth, alpha, beta, is_maximizing):
             board.pop()
             best = min(best, val)
             beta = min(beta, best)
-            if beta <= alpha: break
+            if beta <= alpha: 
+                break
         return best
 
-def find_best_move(board, depth):
+# ================= 8. ВЫБОР ЛУЧШЕГО ХОДА И ДЕБЮТЫ =================
+
+def find_best_move(board, depth=4):
     my_color = board.turn
+    
+    # 1. ПРОВЕРЯЕМ ПРОФЕССИОНАЛЬНУЮ КНИГУ POLYGLOT (book.bin)
+    if os.path.exists("book.bin") and not board.chess960:
+        try:
+            with chess.polyglot.open_reader("book.bin") as reader:
+                entries = list(reader.find_all(board))
+                if entries:
+                    best_entry = max(entries, key=lambda e: e.weight)
+                    print(f"📖 [Polyglot .bin] Выбран гроссмейстерский ход: {best_entry.move()}")
+                    return best_entry.move(), evaluate_board(board)
+        except Exception as e:
+            print(f"⚠️ Ошибка чтения Polyglot книги: {e}")
+
+    # 2. ЕСЛИ .BIN ФАЙЛА НЕТ, СМОТРИМ ТЕКСТОВЫЙ ФАЛЛБЭК
     if not board.chess960:
         move_history = " ".join([m.uci() for m in board.move_stack])
         if move_history in OPENING_BOOK:
@@ -172,13 +265,14 @@ def find_best_move(board, depth):
             legal_book = [chess.Move.from_uci(m) for m in book_choices if chess.Move.from_uci(m) in board.legal_moves]
             if legal_book:
                 chosen_book_move = random.choice(legal_book)
-                print(f"📖 [Книга] Выбран известный дебютный ход: {chosen_book_move.uci()}")
+                print(f"📖 [Текстовая книга] Найден дебютный вариант: {chosen_book_move.uci()}")
                 return chosen_book_move, evaluate_board(board)
 
+    # 3. ЕСЛИ ДЕБЮТ КОНЧИЛСЯ — СЧИТАЕМ ДВИЖКОМ С УЛУЧШЕННОЙ СОРТИРОВКОЙ
     short_fen = " ".join(board.fen().split()[:3])
     legal_moves_list = list(board.legal_moves)
     random.shuffle(legal_moves_list)
-    ordered_moves = sorted(legal_moves_list, key=lambda m: (board.is_capture(m), board.gives_check(m)), reverse=True)
+    ordered_moves = sorted(legal_moves_list, key=lambda m: score_move(board, m), reverse=True)
     
     best_move = None
     alpha, beta = -float('inf'), float('inf')
@@ -189,8 +283,13 @@ def find_best_move(board, depth):
         for move in ordered_moves:
             move_uci = move.uci()
             board.push(move)
-            if move_uci in known_bad_moves: score = -9000.0
-            else: score = minimax(board, depth - 1, alpha, beta, False)
+            
+            # Фильтруем ходы из базы ошибок
+            if move_uci in known_bad_moves: 
+                score = -9000.0
+            else: 
+                score = minimax(board, depth - 1, alpha, beta, False)
+                
             board.pop()
             if score > best_score:
                 best_score = score
@@ -201,8 +300,12 @@ def find_best_move(board, depth):
         for move in ordered_moves:
             move_uci = move.uci()
             board.push(move)
-            if move_uci in known_bad_moves: score = 9000.0
-            else: score = minimax(board, depth - 1, alpha, beta, True)
+            
+            if move_uci in known_bad_moves: 
+                score = 9000.0
+            else: 
+                score = minimax(board, depth - 1, alpha, beta, True)
+                
             board.pop()
             if score < best_score:
                 best_score = score
@@ -211,9 +314,10 @@ def find_best_move(board, depth):
             
     if not best_move and legal_moves_list:
         best_move = random.choice(legal_moves_list)
-    return best_move, evaluate_board(board)
+        
+    return best_move, best_score
 
-# ================= 5. ШАХМАТНЫЙ ЦИКЛ LICHESS =================
+# ================= 9. ШАХМАТНЫЙ ЦИКЛ LICHESS =================
 
 TOKEN = os.environ.get("LICHESS_TOKEN")
 
@@ -233,16 +337,15 @@ def run_chess_bot():
     active_games = set()
     MAX_CONCURRENT_GAMES = 2
 
-    # Поток авто-вызовов
     def auto_challenger():
-        print("📡 Поиск соперников активен.")
+        print("📡 Поиск соперников среди онлайн-ботов активен.")
         while True:
             try:
                 if len(active_games) < MAX_CONCURRENT_GAMES:
                     online_bots = [b['id'] for b in client.bots.get_online_bots() if b.get('id') != my_id]
                     if online_bots:
                         target = random.choice(online_bots)
-                        print(f"⚔️ Кидаем вызов боту @{target}")
+                        print(f"⚔️ Бросаем вызов боту @{target}")
                         client.challenges.create(username=target, rated=True, clock_limit=180, clock_increment=2, variant='standard')
                 time.sleep(45)
             except Exception as e:
@@ -253,9 +356,8 @@ def run_chess_bot():
 
     threading.Thread(target=auto_challenger, daemon=True).start()
 
-    # Поток обработки игры
     def handle_game(game_id):
-        print(f"⚙️ Старт обработки игры {game_id}")
+        print(f"⚙️ Выделен поток для игры {game_id}")
         try:
             board = None
             my_color = None
@@ -265,14 +367,13 @@ def run_chess_bot():
             for state in client.bots.stream_game_state(game_id):
                 if state.get('type') == 'gameFull':
                     initial_fen = state.get('initialFen', chess.STARTING_FEN)
-                    # Фикс ошибки 'startpos' от Личесса
                     if initial_fen == 'startpos':
                         initial_fen = chess.STARTING_FEN
                     
                     board = chess.Board(initial_fen)
                     white_id = state.get('white', {}).get('id', '')
                     my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
-                    print(f"🎯 Партия {game_id} началась! Играем за {'БЕЛОГО' if my_color == chess.WHITE else 'ЧЕРНОГО'}")
+                    print(f"🎯 Игра {game_id}: бот играет за {'БЕЛЫХ' if my_color == chess.WHITE else 'ЧЕРНЫХ'}")
                     game_state = state.get('state', {})
                 else:
                     game_state = state
@@ -284,7 +385,7 @@ def run_chess_bot():
 
                 status = game_state.get('status')
                 if status in ['mate', 'resign', 'draw', 'timeout', 'stalemate', 'outoftime']:
-                    print(f"🏁 Партия {game_id} закончилась. Результат: {status}")
+                    print(f"🏁 Партия {game_id} завершена. Итог: {status}")
                     if game_state.get('winner') and my_history:
                         winner = game_state['winner']
                         if (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE):
@@ -293,23 +394,23 @@ def run_chess_bot():
 
                 if board.turn == my_color and not board.is_game_over():
                     current_fen = board.fen()
-                    move, score = find_best_move(board, depth=3)
+                    # Запускаем поиск на глубину 4 полухода (благодаря MVV-LVA это быстро!)
+                    move, score = find_best_move(board, depth=4)
                     if move:
                         move_uci = move.uci()
-                        print(f"📈 [{game_id}] Делаем ход: {move_uci} (Оценка: {score:+.2f})")
+                        print(f"📈 [{game_id}] Ход: {move_uci} (Оценка движка: {score:+.2f})")
                         try:
                             client.bots.make_move(game_id, move_uci)
                             my_history.append((current_fen, move_uci))
                         except Exception as e:
-                            print(f"❌ Ход не ушел в Личесс: {e}")
+                            print(f"❌ Ход не дошел: {e}")
         except Exception as e:
-            print(f"💥 Крах в потоке игры {game_id}: {e}")
+            print(f"💥 Сбой в потоке партии {game_id}: {e}")
             traceback.print_exc()
         finally:
             active_games.discard(game_id)
 
-    # Главный цикл получения событий
-    print("📥 Ожидание вызовов и стартов игр...")
+    print("📥 Ожидание входящих вызовов...")
     while True:
         try:
             for event in client.bots.stream_incoming_events():
@@ -319,7 +420,7 @@ def run_chess_bot():
                     c_id = event['challenge']['id']
                     challenger = event['challenge']['challenger']['id']
                     if len(active_games) < MAX_CONCURRENT_GAMES:
-                        print(f"🤝 Принят вызов от {challenger}")
+                        print(f"🤝 Принят вызов от @{challenger}")
                         client.bots.accept_challenge(c_id)
                     else:
                         client.bots.decline_challenge(c_id, reason='later')
@@ -330,19 +431,19 @@ def run_chess_bot():
                         active_games.add(g_id)
                         threading.Thread(target=handle_game, args=(g_id,), daemon=True).start()
         except Exception as e:
-            print(f"⚠️ Сетевой сбой: {e}")
+            print(f"⚠️ Сетевая ошибка главного стрима: {e}")
             if "429" in str(e):
-                print("🛑 Личесс ограничил частоту запросов (429). Спим 60 сек...")
+                print("🛑 Сработал лимит Личесса (429). Отдыхаем 60 секунд...")
                 time.sleep(60)
             else:
                 traceback.print_exc()
                 time.sleep(5)
 
-# ================= 6. ТОЧКА ВХОДА ДЛЯ ACTIONS =================
+# ================= 10. ТОЧКА ВХОДА ДЛЯ ACTIONS =================
 
 if __name__ == '__main__':
-    print("⏳ Запуск главного скрипта...")
+    print("⏳ Разворачивание шахматного ядра на сервере GitHub Actions...")
     try:
         run_chess_bot()
     except KeyboardInterrupt:
-        print("Остановка.")
+        print("Процесс завершен.")
