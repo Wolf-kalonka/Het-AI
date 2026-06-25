@@ -3,30 +3,11 @@ import random
 import threading
 import json
 import os
+import traceback
 import berserk
 import chess
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# ================= МГНОВЕННЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER =================
-
-class SimpleKeepAliveServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain; charset=utf-8')
-        self.end_headers()
-        self.wfile.write(b"Het-AI is alive and kicking!")
-
-    def log_message(self, format, *args):
-        return  # Отключаем спам в консоль
-
-def start_web_server():
-    # Render дает порт в переменной PORT. Если её нет, берем 8080
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), SimpleKeepAliveServer)
-    print(f"🌐 [Web Server] Порт {port} открыт! Render доволен.")
-    server.serve_forever()
-
-# ================= ДЕБЮТНЫЕ КНИГИ =================
+# ================= 1. ДЕБЮТНЫЕ КНИГИ (OPENING BOOKS) =================
 
 OPENING_BOOK = {
     "": ["e2e4", "d2d4", "g1f3", "c4c4"],
@@ -48,7 +29,7 @@ OPENING_BOOK = {
     "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3": ["a7a6", "g7g6"],
 }
 
-# ================= ПОЗИЦИОННЫЕ МАТРИЦЫ =================
+# ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ =================
 
 PAWN_PST = [
     0,  0,  0,  0,  0,  0,  0,  0,
@@ -94,7 +75,7 @@ KING_PST = [
      2,  3,  1,  0,  0,  1,  3,  2
 ]
 
-# ================= ДИСТАНЦИОННАЯ ПАМЯТЬ =================
+# ================= 3. ЛОКАЛЬНАЯ ПАМЯТЬ =================
 
 MEMORY_FILE = "bot_memory.json"
 memory_lock = threading.Lock()
@@ -106,7 +87,9 @@ def load_memory():
         try:
             with open(MEMORY_FILE, 'r', encoding='utf-8') as f:
                 bad_moves_db = json.load(f)
-        except Exception:
+            print(f"🧠 Память успешно загружена! Записей ошибок: {len(bad_moves_db)}")
+        except Exception as e:
+            print(f"⚠️ Не удалось прочитать файл памяти (запустимся с пустой): {e}")
             bad_moves_db = {}
 
 def save_bad_move(fen, move_uci):
@@ -117,10 +100,14 @@ def save_bad_move(fen, move_uci):
             bad_moves_db[short_fen] = []
         if move_uci not in bad_moves_db[short_fen]:
             bad_moves_db[short_fen].append(move_uci)
+            print(f"💾 Зафиксирована ошибка на Личессе! Ход {move_uci} сохранен для: {short_fen}")
             try:
                 with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
                     json.dump(bad_moves_db, f, indent=4, ensure_ascii=False)
-            except Exception: pass
+            except Exception as e:
+                print(f"⚠️ Ошибка записи файла памяти на виртуальный диск Actions: {e}")
+
+# ================= 4. ДВИЖОК МИНИМАКСА =================
 
 def evaluate_board(board):
     piece_values = {
@@ -184,7 +171,9 @@ def find_best_move(board, depth):
             book_choices = OPENING_BOOK[move_history]
             legal_book = [chess.Move.from_uci(m) for m in book_choices if chess.Move.from_uci(m) in board.legal_moves]
             if legal_book:
-                return random.choice(legal_book), evaluate_board(board)
+                chosen_book_move = random.choice(legal_book)
+                print(f"📖 [Книга] Найден известный ход: {chosen_book_move.uci()}")
+                return chosen_book_move, evaluate_board(board)
 
     short_fen = " ".join(board.fen().split()[:3])
     legal_moves_list = list(board.legal_moves)
@@ -224,12 +213,12 @@ def find_best_move(board, depth):
         best_move = random.choice(legal_moves_list)
     return best_move, evaluate_board(board)
 
-# ================= ШАХМАТНЫЙ ЦИКЛ LICHESS =================
+# ================= 5. ШАХМАТНЫЙ ЦИКЛ LICHESS =================
 
 TOKEN = os.environ.get("LICHESS_TOKEN")
 
 if not TOKEN:
-    print("❌ ОШИБКА: Переменная окружения LICHESS_TOKEN не найдена!")
+    print("❌ ОШИБКА: Переменная окружения LICHESS_TOKEN не найдена в GitHub Secrets!")
     exit(1)
 
 def run_chess_bot():
@@ -239,27 +228,32 @@ def run_chess_bot():
     
     my_username = client.account.get()['username']
     my_id = client.account.get()['id']
-    print(f"🚀 Шахматный бот {my_username} успешно авторизован!")
+    print(f"🚀 Шахматный бот @{my_username} успешно авторизован в Lichess!")
 
     active_games = set()
     MAX_CONCURRENT_GAMES = 2
 
-    # Поток авто-вызовов
+    # Поток автоматического поиска соперников-ботов
     def auto_challenger():
+        print("📡 Модуль автоматического вызова ботов запущен.")
         while True:
             try:
                 if len(active_games) < MAX_CONCURRENT_GAMES:
                     online_bots = [b['id'] for b in client.bots.get_online_bots() if b.get('id') != my_id]
                     if online_bots:
                         target = random.choice(online_bots)
+                        print(f"⚔️ Отправляем вызов боту @{target}")
                         client.challenges.create(username=target, rated=True, clock_limit=180, clock_increment=2, variant='standard')
-                time.sleep(30)
-            except Exception: time.sleep(10)
+                time.sleep(40)
+            except Exception as e:
+                print(f"⚠️ Предупреждение авто-вызова: {e}")
+                time.sleep(15)
 
     threading.Thread(target=auto_challenger, daemon=True).start()
 
-    # Поток обработки конкретной игры
+    # Поток обработки конкретной шахматной партии
     def handle_game(game_id):
+        print(f"⚙️ Создан изолированный поток для обработки партии: {game_id}")
         try:
             board = None
             my_color = None
@@ -271,6 +265,7 @@ def run_chess_bot():
                     board = chess.Board(state.get('initialFen', chess.STARTING_FEN))
                     white_id = state.get('white', {}).get('id', '')
                     my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
+                    print(f"🎯 Игра {game_id} инициализирована. Цвет бота: {'Белые' if my_color == chess.WHITE else 'Черные'}")
                     game_state = state.get('state', {})
                 else:
                     game_state = state
@@ -280,46 +275,68 @@ def run_chess_bot():
                     board.push_uci(raw_moves[moves_count])
                     moves_count += 1
 
-                if game_state.get('status') in ['mate', 'resign', 'draw', 'timeout']:
+                status = game_state.get('status')
+                if status in ['mate', 'resign', 'draw', 'timeout', 'stalemate', 'outoftime']:
+                    print(f"🏁 Партия {game_id} завершена. Статус: {status}")
                     if game_state.get('winner') and my_history:
-                        if (game_state['winner'] == 'white' and my_color == chess.BLACK) or (game_state['winner'] == 'black' and my_color == chess.WHITE):
+                        winner = game_state['winner']
+                        if (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE):
+                            # Если проиграли, отправляем последний сделанный ход в список ошибочных
                             save_bad_move(my_history[-1][0], my_history[-1][1])
                     break
 
                 if board.turn == my_color and not board.is_game_over():
                     current_fen = board.fen()
-                    move, _ = find_best_move(board, depth=3)
+                    move, score = find_best_move(board, depth=3)
                     if move:
+                        move_uci = move.uci()
+                        print(f"📈 [{game_id}] Выбран ход: {move_uci} (Оценка позиции: {score:+.2f})")
                         try:
-                            client.bots.make_move(game_id, move.uci())
-                            my_history.append((current_fen, move.uci()))
-                        except Exception: pass
-        except Exception: pass
-        finally: active_games.discard(game_id)
+                            client.bots.make_move(game_id, move_uci)
+                            my_history.append((current_fen, move_uci))
+                        except Exception as e:
+                            print(f"❌ Не удалось передать ход {move_uci} через API Личесса: {e}")
+        except Exception as e:
+            print(f"💥 КРИТИЧЕСКАЯ ОШИБКА в логике партии {game_id}: {e}")
+            traceback.print_exc()
+        finally:
+            active_games.discard(game_id)
+            print(f"🗑️ Партия {game_id} удалена из пула активных процессов.")
 
-    # Поток прослушивания событий
+    # Главный прослушиватель событий (Event Stream) Личесса
+    print("📥 Запускаем основной бесконечный цикл обработки событий...")
     while True:
         try:
             for event in client.bots.stream_incoming_events():
-                if event.get('type') == 'challenge':
+                event_type = event.get('type')
+                
+                if event_type == 'challenge':
                     c_id = event['challenge']['id']
-                    if len(active_games) < MAX_CONCURRENT_GAMES: client.bots.accept_challenge(c_id)
-                    else: client.bots.decline_challenge(c_id)
-                elif event.get('type') == 'gameStart':
+                    challenger = event['challenge']['challenger']['id']
+                    if len(active_games) < MAX_CONCURRENT_GAMES:
+                        print(f"🤝 Принимаем входящий вызов от {challenger} (ID: {c_id})")
+                        client.bots.accept_challenge(c_id)
+                    else:
+                        print(f"🚫 Отклоняем вызов от {challenger}, так как пул игр заполнен.")
+                        client.bots.decline_challenge(c_id, reason='later')
+                        
+                elif event_type == 'gameStart':
                     g_id = event['game']['id']
                     if g_id not in active_games:
                         active_games.add(g_id)
                         threading.Thread(target=handle_game, args=(g_id,), daemon=True).start()
-        except Exception: time.sleep(5)
+        except Exception as e:
+            print(f"⚠️ Сбой сетевого подключения потока Личесс. Перезапуск через 5 сек... Ошибка: {e}")
+            traceback.print_exc()
+            time.sleep(5)
 
-# ================= ТОЧКА ВХОДА =================
+# ================= 6. ТОЧКА ВХОДА ДЛЯ GITHUB ACTIONS =================
 
 if __name__ == '__main__':
-    load_memory()
-    
-    # Запускаем бота напрямую. Скрипт замрёт на этой строчке 
-    # и будет бесконечно слушать Личесс, пока Гитхаб его не выключит.
+    print("⏳ Инициализация запуска на GitHub Actions...")
     try:
+        # Запускаем всё напрямую на главном потоке.
+        # Процесс замрет здесь и будет работать 24/7, пока воркфлоу активен.
         run_chess_bot()
     except KeyboardInterrupt:
-        print("Бот остановлен вручную.")
+        print("Бот принудительно остановлен пользователем.")
