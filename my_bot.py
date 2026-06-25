@@ -24,7 +24,6 @@ OPENING_BOOK = {
     "c4c4": ["e7e5", "c7c5"],
     "e2e4 c7c5 g1f3": ["d7d6", "b8c6"],
     "e2e4 c7c5 g1f3 d7d6 d2d4": ["c5d4"],
-    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4": ["g8f6"],
     "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3": ["a7a6", "g7g6"],
 }
 
@@ -320,7 +319,7 @@ def handle_game(game_id):
 
 if __name__ == '__main__':
     load_memory()
-    print(f"🚀 Робот {my_username} успешно запущен на Koyeb 24/7!")
+    print(f"🚀 Робот {my_username} успешно запущен в режиме Background Worker!")
     
     threading.Thread(target=auto_challenger, daemon=True).start()
 
