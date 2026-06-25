@@ -29,4 +29,4 @@ jobs:
       env:
         # Передаем наш секрет внутрь скрипта Python как переменную окружения
         LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
-      run: python bot.py
+      run: python my_bot.py
