@@ -10,7 +10,7 @@ import chess
 # ================= 1. ДЕБЮТНЫЕ КНИГИ (OPENING BOOKS) =================
 
 OPENING_BOOK = {
-    "": ["e2e4", "d2d4", "g1f3", "c4c4"],
+    "": ["e2e4", "d2d4", "g1f3", "c2c4"],
     "e2e4 e7e5": ["g1f3"],
     "e2e4 e7e5 g1f3": ["b8c6"],
     "e2e4 e7e5 g1f3 b8c6": ["b1b5", "b1c4", "d2d4"],
