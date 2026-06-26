@@ -11,46 +11,30 @@ import chess.polyglot
 # ================= 1. РАСШИРЕННАЯ ДЕБЮТНАЯ КНИГА ОСТРЫХ ЛИНИЙ =================
 
 OPENING_BOOK = {
-    # Стартовые ответы белыми
-    "": ["e2e4", "d2d4", "g1f3", "c2c4"],
-    
-    # Открытые дебюты (1.e4 e5)
+    "": ["e2e4", "d2d4", "g1f3", "c4c4"],
     "e2e4 e7e5": ["g1f3"],
     "e2e4 e7e5 g1f3": ["b8c6"],
-    "e2e4 e7e5 g1f3 b8c6": ["b1b5", "d2d4", "b1c4"], # Испанка, Шотландка, Итальянка
-    
-    # Итальянка и Гамбит Эванса
+    "e2e4 e7e5 g1f3 b8c6": ["b1b5", "d2d4", "b1c4"],
     "e2e4 e7e5 g1f3 b8c6 b1c4": ["f8c5"],
-    "e2e4 e7e5 g1f3 b8c6 b1c4 f8c5": ["b2b4", "c2c3"], # b2b4 - Гамбит Эванса!
+    "e2e4 e7e5 g1f3 b8c6 b1c4 f8c5": ["b2b4", "c2c3"], 
     "e2e4 e7e5 g1f3 b8c6 b1c4 f8c5 b2b4 c5b4 c2c3": ["b4a5", "b4c5"],
-    
-    # Шотландская партия
     "e2e4 e7e5 g1f3 b8c6 d2d4": ["e5d4"],
     "e2e4 e7e5 g1f3 b8c6 d2d4 e5d4": ["f3d4"],
     "e2e4 e7e5 g1f3 b8c6 d2d4 e5d4 f3d4 g8f6": ["b1c3", "d4c6"],
-    
-    # Сицилианская защита (Агрессия за оба цвета)
     "e2e4 c7c5": ["g1f3", "b1c3"],
     "e2e4 c7c5 g1f3": ["d7d6", "e7e6", "b8c6"],
     "e2e4 c7c5 g1f3 d7d6": ["d2d4"],
     "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4": ["f3d4"],
     "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6": ["b1c3"],
-    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3": ["a7a6", "g7g6", "e7e6"], # Вариант Найдорфа / Дракона
-    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6": ["c1g5", "f2f4", "f2f3"], # Острейшие ответы белых
-    
-    # Французская защита и Каро-Канн
+    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6": ["c1g5", "f2f4", "f2f3"],
     "e2e4 e7e6": ["d2d4"],
-    "e2e4 e7e6 d2d4 d7d5": ["b1c3", "e4e5"],
+    "e2e4 e7e6 d2d4 d5": ["b1c3", "e4e5"],
     "e2e4 c7c6": ["d2d4"],
-    "e2e4 c7c6 d2d4 d7d5": ["b1c3", "e4e5"],
-    
-    # Закрытые дебюты (1.d4 d5)
+    "e2e4 c7c6 d2d4 d5": ["b1c3", "e4e5"],
     "d2d4 d7d5": ["c4c4"],
-    "d2d4 d7d5 c4c4": ["e7e6", "c7c6", "d5c4"], # Принятый и отказанный ферзевый
+    "d2d4 d7d5 c4c4": ["e7e6", "c7c6", "d5c4"],
     "d2d4 g8f6": ["c4c4"],
-    "d2d4 g8f6 c4c4": ["g7g6", "e7e6"], # Староиндийская / Нимцович
-    
-    # Ответы черными на ходы белых
+    "d2d4 g8f6 c4c4": ["g7g6", "e7e6"],
     "e2e4": ["c7c5", "e7e5", "c7c6"],
     "d2d4": ["g8f6", "d7d5"],
     "g1f3": ["d7d5", "g8f6"],
@@ -145,7 +129,7 @@ def save_bad_move(fen, move_uci):
             except Exception:
                 pass
 
-# ================= 4. ЗОЛОТОЙ КОЗЫРЬ: ФУНКЦИЯ УМНОЙ ОЦЕНКИ =================
+# ================= 4. СВЕРХБЫСТРАЯ ФУНКЦИЯ УМНОЙ ОЦЕНКИ =================
 
 def evaluate_board(board):
     if board.is_checkmate():
@@ -158,47 +142,41 @@ def evaluate_board(board):
         chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 20000
     }
     
-    # Определение стадии игры
     num_heavy_pieces = len(board.pieces(chess.QUEEN, chess.WHITE)) + len(board.pieces(chess.QUEEN, chess.BLACK)) + \
                        len(board.pieces(chess.ROOK, chess.WHITE)) + len(board.pieces(chess.ROOK, chess.BLACK))
     is_endgame = num_heavy_pieces <= 2
 
-    # Находим королей для охотничьего радара
     white_king_sq = board.king(chess.WHITE)
     black_king_sq = board.king(chess.BLACK)
 
     score = 0
     
-    # 1. Оценка материала и позиций по PST
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if piece:
-            val = piece_values[piece.piece_type]
-            idx = square if piece.color == chess.WHITE else chess.square_mirror(square)
-            
-            if not board.chess960:
-                if piece.piece_type == chess.PAWN: val += PAWN_PST[idx]
-                elif piece.piece_type == chess.KNIGHT: val += KNIGHT_PST[idx]
-                elif piece.piece_type == chess.BISHOP: val += BISHOP_PST[idx]
-                elif piece.piece_type == chess.KING:
-                    val += KING_ENDGAME_PST[idx] if is_endgame else KING_MIDDLEGAME_PST[idx]
-            
-            # 🔥 КОЗЫРЬ: Модуль агрессии «Ярость Охотника» (King-Hunt Core)
-            # Если это атакующая фигура, поощряем её близость к чужому королю
-            if not is_endgame and piece.piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]:
-                enemy_king = black_king_sq if piece.color == chess.WHITE else white_king_sq
-                if enemy_king is not None:
-                    dist = chess.square_distance(square, enemy_king)
-                    if dist <= 3:
-                        val += (4 - dist) * 15  # Чем ближе к королю, тем больше бонуса движку!
+    # 🔥 ОПТИМИЗАЦИЯ: Итерируемся только по реальным фигурам на доске через piece_map()
+    for square, piece in board.piece_map().items():
+        val = piece_values[piece.piece_type]
+        idx = square if piece.color == chess.WHITE else chess.square_mirror(square)
+        
+        if not board.chess960:
+            if piece.piece_type == chess.PAWN: val += PAWN_PST[idx]
+            elif piece.piece_type == chess.KNIGHT: val += KNIGHT_PST[idx]
+            elif piece.piece_type == chess.BISHOP: val += BISHOP_PST[idx]
+            elif piece.piece_type == chess.KING:
+                val += KING_ENDGAME_PST[idx] if is_endgame else KING_MIDDLEGAME_PST[idx]
+        
+        # «Ярость Охотника» (King-Hunt Core)
+        if not is_endgame and piece.piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]:
+            enemy_king = black_king_sq if piece.color == chess.WHITE else white_king_sq
+            if enemy_king is not None:
+                dist = chess.square_distance(square, enemy_king)
+                if dist <= 3:
+                    val += (4 - dist) * 15
 
-            if piece.color == chess.WHITE:
-                score += val
-            else:
-                score -= val
+        if piece.color == chess.WHITE:
+            score += val
+        else:
+            score -= val
 
-    # 2. Мобильность (Контроль пространства)
-    # Даем небольшие бонусы за общую свободу действий фигур
+    # Контроль пространства
     mobility = board.legal_moves.count()
     if board.turn == chess.WHITE:
         score += mobility * 2
@@ -288,22 +266,22 @@ def minimax(board, depth, alpha, beta, is_maximizing):
 
 # ================= 8. СТРАТЕГИЧЕСКИЙ ВЫБОР ХОДА =================
 
-def find_best_move(board, depth=4):
+def find_best_move(board, depth=3):
     my_color = board.turn
     
-    # 1. Профессиональная книга Polyglot (если закинул файл)
+    # 1. Книга Polyglot
     if os.path.exists("book.bin") and not board.chess960:
         try:
             with chess.polyglot.open_reader("book.bin") as reader:
                 entries = list(reader.find_all(board))
                 if entries:
                     best_entry = max(entries, key=lambda e: e.weight)
-                    print(f"📖 [Polyglot .bin] Идеальный ход: {best_entry.move()}")
+                    print(f"📖 [Polyglot] Идеальный ход: {best_entry.move()}")
                     return best_entry.move(), evaluate_board(board)
         except Exception as e:
             print(f"⚠️ Ошибка Polyglot: {e}")
 
-    # 2. Огромная встроенная текстовая книга
+    # 2. Текстовая книга
     if not board.chess960:
         move_history = " ".join([m.uci() for m in board.move_stack])
         if move_history in OPENING_BOOK:
@@ -314,7 +292,7 @@ def find_best_move(board, depth=4):
                 print(f"📖 [Книга Дебютов] Острый вариант: {chosen_book_move.uci()}")
                 return chosen_book_move, evaluate_board(board)
 
-    # 3. Расчет движка с «Ядром Агрессии»
+    # 3. Расчет движка
     short_fen = " ".join(board.fen().split()[:3])
     legal_moves_list = list(board.legal_moves)
     random.shuffle(legal_moves_list)
@@ -404,23 +382,20 @@ def run_chess_bot():
             moves_count = 0
             my_history = []
             
-            # Списки фраз для чата
             greetings = [
                 "Привет! Поиграем? Удачи! 🤖",
                 "Приветствую! Пусть победит сильнейший! ⚔️",
                 "Здравствуй, человек. Хет-АИ готов к бою! 🚀",
                 "Привет! Надеюсь, игра будет интересной. Нападай! 🔥"
             ]
-            
             goodbyes_win = [
                 "Отличная игра! Спасибо за партию. 🤝",
                 "Шах и мат. Было круто, спасибо! 👑",
                 "Хорошо сыграно! Удачи в следующих играх!"
             ]
-            
             goodbyes_lose = [
                 "Ух, это было мощно. Поздравляю с победой! 👏",
-                "Отличный маневр, ты играешь круче моего процессора! Меня надо подкрутить... 🛠️",
+                "Отличный маневр! Меня надо подкрутить... 🛠️",
                 "Хорошая игра! Спасибо за урок."
             ]
 
@@ -434,7 +409,6 @@ def run_chess_bot():
                     white_id = state.get('white', {}).get('id', '')
                     my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
                     
-                    # 💬 БОТ ЗДОРОВАЕТСЯ ПРИ СТАРТЕ ПАРТИИ
                     try:
                         client.bots.post_message(game_id, random.choice(greetings))
                     except Exception:
@@ -449,23 +423,25 @@ def run_chess_bot():
                     board.push_uci(raw_moves[moves_count])
                     moves_count += 1
 
+                # Безопасный тайм-менеджмент
                 my_time_key = 'wtime' if my_color == chess.WHITE else 'btime'
-                available_time = game_state.get(my_time_key, 180000) / 1000.0
+                raw_time = game_state.get(my_time_key)
+                if raw_time is None:
+                    raw_time = 180000
+                available_time = float(raw_time) / 1000.0
                 
-                if available_time < 20: 
+                if available_time < 15: 
+                    current_depth = 1  
+                elif available_time < 40: 
                     current_depth = 2
-                elif available_time < 50: 
-                    current_depth = 3
                 else: 
-                    current_depth = 4
+                    current_depth = 3 # Идеальный баланс скорости и ума
 
                 status = game_state.get('status')
                 if status in ['mate', 'resign', 'draw', 'timeout', 'stalemate', 'outoftime']:
-                    # 💬 БОТ ПРОЩАЕТСЯ В КОНЦЕ ПАРТИИ
                     try:
                         winner = game_state.get('winner')
                         if winner:
-                            # Если победил наш цвет
                             if (winner == 'white' and my_color == chess.WHITE) or (winner == 'black' and my_color == chess.BLACK):
                                 client.bots.post_message(game_id, random.choice(goodbyes_win))
                             else:
