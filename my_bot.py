@@ -8,84 +8,113 @@ import berserk
 import chess
 import chess.polyglot
 
-# ================= 1. ТЕКСТОВЫЙ ДЕБЮТНЫЙ НАБОР (ФАЛЛБЭК) =================
+# ================= 1. РАСШИРЕННАЯ ДЕБЮТНАЯ КНИГА ОСТРЫХ ЛИНИЙ =================
 
 OPENING_BOOK = {
+    # Стартовые ответы белыми
     "": ["e2e4", "d2d4", "g1f3", "c2c4"],
+    
+    # Открытые дебюты (1.e4 e5)
     "e2e4 e7e5": ["g1f3"],
     "e2e4 e7e5 g1f3": ["b8c6"],
-    "e2e4 e7e5 g1f3 b8c6": ["b1b5", "b1c4", "d2d4"],
+    "e2e4 e7e5 g1f3 b8c6": ["b1b5", "d2d4", "b1c4"], # Испанка, Шотландка, Итальянка
+    
+    # Итальянка и Гамбит Эванса
+    "e2e4 e7e5 g1f3 b8c6 b1c4": ["f8c5"],
+    "e2e4 e7e5 g1f3 b8c6 b1c4 f8c5": ["b2b4", "c2c3"], # b2b4 - Гамбит Эванса!
+    "e2e4 e7e5 g1f3 b8c6 b1c4 f8c5 b2b4 c5b4 c2c3": ["b4a5", "b4c5"],
+    
+    # Шотландская партия
+    "e2e4 e7e5 g1f3 b8c6 d2d4": ["e5d4"],
+    "e2e4 e7e5 g1f3 b8c6 d2d4 e5d4": ["f3d4"],
+    "e2e4 e7e5 g1f3 b8c6 d2d4 e5d4 f3d4 g8f6": ["b1c3", "d4c6"],
+    
+    # Сицилианская защита (Агрессия за оба цвета)
     "e2e4 c7c5": ["g1f3", "b1c3"],
     "e2e4 c7c5 g1f3": ["d7d6", "e7e6", "b8c6"],
-    "e2e4 c7c5 g1f3 d7d6 d2d4": ["c5d4"],
+    "e2e4 c7c5 g1f3 d7d6": ["d2d4"],
+    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4": ["f3d4"],
+    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6": ["b1c3"],
+    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3": ["a7a6", "g7g6", "e7e6"], # Вариант Найдорфа / Дракона
+    "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6": ["c1g5", "f2f4", "f2f3"], # Острейшие ответы белых
+    
+    # Французская защита и Каро-Канн
+    "e2e4 e7e6": ["d2d4"],
+    "e2e4 e7e6 d2d4 d7d5": ["b1c3", "e4e5"],
+    "e2e4 c7c6": ["d2d4"],
+    "e2e4 c7c6 d2d4 d7d5": ["b1c3", "e4e5"],
+    
+    # Закрытые дебюты (1.d4 d5)
     "d2d4 d7d5": ["c4c4"],
-    "d2d4 d7d5 c4c4": ["e7e6", "c7c6"],
-    "e2e4": ["c7c5", "e7e5", "e7e6", "c7c6"],
-    "d2d4": ["d7d5", "g8f6"],
+    "d2d4 d7d5 c4c4": ["e7e6", "c7c6", "d5c4"], # Принятый и отказанный ферзевый
+    "d2d4 g8f6": ["c4c4"],
+    "d2d4 g8f6 c4c4": ["g7g6", "e7e6"], # Староиндийская / Нимцович
+    
+    # Ответы черными на ходы белых
+    "e2e4": ["c7c5", "e7e5", "c7c6"],
+    "d2d4": ["g8f6", "d7d5"],
     "g1f3": ["d7d5", "g8f6"],
-    "c4c4": ["e7e5", "c7c5"],
+    "c4c4": ["e7e5", "c7c5"]
 }
 
 # ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ (PST) =================
 
 PAWN_PST = [
     0,  0,  0,  0,  0,  0,  0,  0,
-    5,  5,  5,  5,  5,  5,  5,  5,
-    1,  1,  2,  3,  3,  2,  1,  1,
-    0,  0,  2,  4,  4,  2,  0,  0,
-    0,  0,  1,  4,  4,  1,  0,  0,
-    1, -1, -2,  0,  0, -2, -1,  1,
-    1,  2,  2, -3, -3,  2,  2,  1,
-    0,  0,  0,  0,  0,  0,  0,  0
+    50, 50, 50, 50, 50, 50, 50, 50,
+    10, 10, 20, 30, 30, 20, 10, 10,
+     5,  5, 10, 25, 25, 10,  5,  5,
+     0,  0,  0, 20, 20,  0,  0,  0,
+     5, -5,-10,  0,  0,-10, -5,  5,
+     5, 10, 10,-20,-20, 10, 10,  5,
+     0,  0,  0,  0,  0,  0,  0,  0
 ]
 
 KNIGHT_PST = [
-    -5, -4, -3, -3, -3, -3, -4, -5,
-    -4, -2,  0,  0,  0,  0, -2, -4,
-    -3,  0,  1,  2,  2,  1,  0, -3,
-    -3,  1,  2,  3,  3,  2,  1, -3,
-    -3,  0,  2,  3,  3,  2,  0, -3,
-    -3,  1,  1,  2,  2,  1,  1, -3,
-    -4, -2,  0,  1,  1,  0, -2, -4,
-    -5, -4, -3, -3, -3, -3, -4, -5
+    -50,-40,-30,-30,-30,-30,-40,-50,
+    -40,-20,  0,  0,  0,  0,-20,-40,
+    -30,  0, 10, 15, 15, 10,  0,-30,
+    -30,  5, 15, 20, 20, 15,  5,-30,
+    -30,  0, 15, 20, 20, 15,  0,-30,
+    -30,  5, 10, 15, 15, 10,  5,-30,
+    -40,-20,  0,  5,  5,  0,-20,-40,
+    -50,-40,-30,-30,-30,-30,-40,-50
 ]
 
 BISHOP_PST = [
-    -2, -1, -1, -1, -1, -1, -1, -2,
-    -1,  0,  0,  0,  0,  0,  0, -1,
-    -1,  0,  1,  2,  2,  1,  0, -1,
-    -1,  1,  1,  2,  2,  1,  1, -1,
-    -1,  0,  2,  2,  2,  2,  0, -1,
-    -1,  2,  2,  1,  1,  2,  2, -1,
-    -1,  1,  0,  0,  0,  0,  1, -1,
-    -2, -1, -1, -1, -1, -1, -1, -2
+    -20,-10,-10,-10,-10,-10,-10,-20,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -10,  0,  5, 10, 10,  5,  0,-10,
+    -10,  5,  5, 10, 10,  5,  5,-10,
+    -10,  0, 10, 10, 10, 10,  0,-10,
+    -10, 10, 10, 10, 10, 10, 10,-10,
+    -10,  5,  0,  0,  0,  0,  5,-10,
+    -20,-10,-10,-10,-10,-10,-10,-20
 ]
 
-# Миттельшпиль: Король прячется в углу за пешками
 KING_MIDDLEGAME_PST = [
-    -3, -4, -4, -5, -5, -4, -4, -3,
-    -3, -4, -4, -5, -5, -4, -4, -3,
-    -3, -4, -4, -5, -5, -4, -4, -3,
-    -3, -4, -4, -5, -5, -4, -4, -3,
-    -2, -3, -3, -4, -4, -3, -3, -2,
-    -1, -2, -2, -2, -2, -2, -2, -1,
-     2,  2,  0,  0,  0,  0,  2,  2,
-     2,  3,  1,  0,  0,  1,  3,  2
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -20,-30,-30,-40,-40,-30,-30,-20,
+    -10,-20,-20,-20,-20,-20,-20,-10,
+     20, 20,  0,  0,  0,  0, 20, 20,
+     20, 30, 10,  0,  0, 10, 30, 20
 ]
 
-# Эндшпиль: Король обязан идти в центр атаковать и вести свои пешки
 KING_ENDGAME_PST = [
-    -5, -3, -2, -2, -2, -2, -3, -5,
-    -3, -1,  0,  0,  0,  0, -1, -3,
-    -3,  0,  2,  3,  3,  2,  0, -3,
-    -3,  0,  3,  4,  4,  3,  0, -3,
-    -3,  0,  3,  4,  4,  3,  0, -3,
-    -3,  0,  2,  3,  3,  2,  0, -3,
-    -3, -1,  0,  0,  0,  0, -1, -3,
-    -5, -3, -2, -2, -2, -2, -3, -5
+    -50,-30,-30,-30,-30,-30,-30,-50,
+    -30,-10,  0,  0,  0,  0,-10,-30,
+    -30,  0, 20, 30, 30, 20,  0,-30,
+    -30,  0, 30, 40, 40, 30,  0,-30,
+    -30,  0, 30, 40, 40, 30,  0,-30,
+    -30,  0, 20, 30, 30, 20,  0,-30,
+    -30,-10,  0,  0,  0,  0,-10,-30,
+    -50,-30,-30,-30,-30,-30,-30,-50
 ]
 
-# ================= 3. ЛОКАЛЬНАЯ ПАМЯТЬ ОШИБОК =================
+# ================= 3. ЧЕРНЫЙ СПИСОК ОШИБОК =================
 
 MEMORY_FILE = "bot_memory.json"
 memory_lock = threading.Lock()
@@ -109,14 +138,14 @@ def save_bad_move(fen, move_uci):
             bad_moves_db[short_fen] = []
         if move_uci not in bad_moves_db[short_fen]:
             bad_moves_db[short_fen].append(move_uci)
-            print(f"💾 Ход {move_uci} занесен в черный список для позиции: {short_fen}")
+            print(f"💾 Ошибка зафиксирована! Ход {move_uci} забанен для позиции: {short_fen}")
             try:
                 with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
                     json.dump(bad_moves_db, f, indent=4, ensure_ascii=False)
             except Exception:
                 pass
 
-# ================= 4. ФУНКЦИЯ ОЦЕНКИ И СТАДИИ ИГРЫ =================
+# ================= 4. ЗОЛОТОЙ КОЗЫРЬ: ФУНКЦИЯ УМНОЙ ОЦЕНКИ =================
 
 def evaluate_board(board):
     if board.is_checkmate():
@@ -129,19 +158,24 @@ def evaluate_board(board):
         chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 20000
     }
     
-    # Считаем количество тяжелых фигур для определения стадии игры
+    # Определение стадии игры
     num_heavy_pieces = len(board.pieces(chess.QUEEN, chess.WHITE)) + len(board.pieces(chess.QUEEN, chess.BLACK)) + \
                        len(board.pieces(chess.ROOK, chess.WHITE)) + len(board.pieces(chess.ROOK, chess.BLACK))
     is_endgame = num_heavy_pieces <= 2
 
+    # Находим королей для охотничьего радара
+    white_king_sq = board.king(chess.WHITE)
+    black_king_sq = board.king(chess.BLACK)
+
     score = 0
+    
+    # 1. Оценка материала и позиций по PST
     for square in chess.SQUARES:
         piece = board.piece_at(square)
         if piece:
             val = piece_values[piece.piece_type]
             idx = square if piece.color == chess.WHITE else chess.square_mirror(square)
             
-            # Применяем PST матрицы для стандартных шахмат
             if not board.chess960:
                 if piece.piece_type == chess.PAWN: val += PAWN_PST[idx]
                 elif piece.piece_type == chess.KNIGHT: val += KNIGHT_PST[idx]
@@ -149,17 +183,33 @@ def evaluate_board(board):
                 elif piece.piece_type == chess.KING:
                     val += KING_ENDGAME_PST[idx] if is_endgame else KING_MIDDLEGAME_PST[idx]
             
+            # 🔥 КОЗЫРЬ: Модуль агрессии «Ярость Охотника» (King-Hunt Core)
+            # Если это атакующая фигура, поощряем её близость к чужому королю
+            if not is_endgame and piece.piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]:
+                enemy_king = black_king_sq if piece.color == chess.WHITE else white_king_sq
+                if enemy_king is not None:
+                    dist = chess.square_distance(square, enemy_king)
+                    if dist <= 3:
+                        val += (4 - dist) * 15  # Чем ближе к королю, тем больше бонуса движку!
+
             if piece.color == chess.WHITE:
                 score += val
             else:
                 score -= val
+
+    # 2. Мобильность (Контроль пространства)
+    # Даем небольшие бонусы за общую свободу действий фигур
+    mobility = board.legal_moves.count()
+    if board.turn == chess.WHITE:
+        score += mobility * 2
+    else:
+        score -= mobility * 2
                 
     return score / 100.0
 
-# ================= 5. ПРЕДВАРИТЕЛЬНАЯ СОРТИРОВКА ХОДОВ =================
+# ================= 5. СОРТИРОВКА ХОДОВ (MVV-LVA) =================
 
 def score_move(board, move):
-    # Реализация базового правила MVV-LVA (Ценность жертвы / Ценность атакующего)
     if board.is_capture(move):
         attacker = board.piece_at(move.from_square)
         target = board.piece_at(move.to_square)
@@ -170,16 +220,14 @@ def score_move(board, move):
         return 500
     return 0
 
-# ================= 6. ПОИСК ЗАТИШЬЯ (QUIESCENCE SEARCH) =================
+# ================= 6. ПОИСК ЗАТИШЬЯ (QUIESCENCE) =================
 
 def quiescence(board, alpha, beta):
-    # Базовая оценка "тихой" позиции
     stand_pat = evaluate_board(board)
     if board.turn == chess.WHITE:
         if stand_pat >= beta: return beta
         if alpha < stand_pat: alpha = stand_pat
         
-        # Проверяем только взятия фигур, чтобы не пропустить тактический зевок
         capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
         ordered_captures = sorted(capture_moves, key=lambda m: score_move(board, m), reverse=True)
         
@@ -205,16 +253,14 @@ def quiescence(board, alpha, beta):
             if score < beta: beta = score
         return beta
 
-# ================= 7. ОСНОВНОЙ АЛЬФА-БЕТА ПОИСК =================
+# ================= 7. МИНИМАКС ПОИСК =================
 
 def minimax(board, depth, alpha, beta, is_maximizing):
     if board.is_repetition(3): 
         return 0.0
     if board.is_game_over() or depth == 0:
-        # Вместо резкой остановки запускаем поиск затишья для просчета всех взятий
         return quiescence(board, alpha, beta)
 
-    # Сортируем ходы, ускоряя альфа-бета отсечение в разы
     ordered_moves = sorted(board.legal_moves, key=lambda m: score_move(board, m), reverse=True)
 
     if is_maximizing:
@@ -240,24 +286,24 @@ def minimax(board, depth, alpha, beta, is_maximizing):
                 break
         return best
 
-# ================= 8. ВЫБОР ЛУЧШЕГО ХОДА И ДЕБЮТЫ =================
+# ================= 8. СТРАТЕГИЧЕСКИЙ ВЫБОР ХОДА =================
 
 def find_best_move(board, depth=4):
     my_color = board.turn
     
-    # 1. ПРОВЕРЯЕМ ПРОФЕССИОНАЛЬНУЮ КНИГУ POLYGLOT (book.bin)
+    # 1. Профессиональная книга Polyglot (если закинул файл)
     if os.path.exists("book.bin") and not board.chess960:
         try:
             with chess.polyglot.open_reader("book.bin") as reader:
                 entries = list(reader.find_all(board))
                 if entries:
                     best_entry = max(entries, key=lambda e: e.weight)
-                    print(f"📖 [Polyglot .bin] Выбран гроссмейстерский ход: {best_entry.move()}")
+                    print(f"📖 [Polyglot .bin] Идеальный ход: {best_entry.move()}")
                     return best_entry.move(), evaluate_board(board)
         except Exception as e:
-            print(f"⚠️ Ошибка чтения Polyglot книги: {e}")
+            print(f"⚠️ Ошибка Polyglot: {e}")
 
-    # 2. ЕСЛИ .BIN ФАЙЛА НЕТ, СМОТРИМ ТЕКСТОВЫЙ ФАЛЛБЭК
+    # 2. Огромная встроенная текстовая книга
     if not board.chess960:
         move_history = " ".join([m.uci() for m in board.move_stack])
         if move_history in OPENING_BOOK:
@@ -265,10 +311,10 @@ def find_best_move(board, depth=4):
             legal_book = [chess.Move.from_uci(m) for m in book_choices if chess.Move.from_uci(m) in board.legal_moves]
             if legal_book:
                 chosen_book_move = random.choice(legal_book)
-                print(f"📖 [Текстовая книга] Найден дебютный вариант: {chosen_book_move.uci()}")
+                print(f"📖 [Книга Дебютов] Острый вариант: {chosen_book_move.uci()}")
                 return chosen_book_move, evaluate_board(board)
 
-    # 3. ЕСЛИ ДЕБЮТ КОНЧИЛСЯ — СЧИТАЕМ ДВИЖКОМ С УЛУЧШЕННОЙ СОРТИРОВКОЙ
+    # 3. Расчет движка с «Ядром Агрессии»
     short_fen = " ".join(board.fen().split()[:3])
     legal_moves_list = list(board.legal_moves)
     random.shuffle(legal_moves_list)
@@ -284,7 +330,6 @@ def find_best_move(board, depth=4):
             move_uci = move.uci()
             board.push(move)
             
-            # Фильтруем ходы из базы ошибок
             if move_uci in known_bad_moves: 
                 score = -9000.0
             else: 
@@ -317,12 +362,12 @@ def find_best_move(board, depth=4):
         
     return best_move, best_score
 
-# ================= 9. ШАХМАТНЫЙ ЦИКЛ LICHESS =================
+# ================= 9. ЦИКЛ ВЗАИМОДЕЙСТВИЯ С LICHESS =================
 
 TOKEN = os.environ.get("LICHESS_TOKEN")
 
 if not TOKEN:
-    print("❌ ОШИБКА: Переменная LICHESS_TOKEN отсутствует в GitHub Secrets!")
+    print("❌ ОШИБКА: Нет LICHESS_TOKEN!")
     exit(1)
 
 def run_chess_bot():
@@ -332,32 +377,27 @@ def run_chess_bot():
     
     my_username = client.account.get()['username']
     my_id = client.account.get()['id']
-    print(f"🚀 Шахматный бот @{my_username} успешно запущен!")
+    print(f"🚀 Het-AI в боевой готовности! Никнейм: @{my_username}")
 
     active_games = set()
     MAX_CONCURRENT_GAMES = 2
 
     def auto_challenger():
-        print("📡 Поиск соперников среди онлайн-ботов активен.")
         while True:
             try:
                 if len(active_games) < MAX_CONCURRENT_GAMES:
                     online_bots = [b['id'] for b in client.bots.get_online_bots() if b.get('id') != my_id]
                     if online_bots:
                         target = random.choice(online_bots)
-                        print(f"⚔️ Бросаем вызов боту @{target}")
+                        print(f"⚔️ Вызов отправлен: @{target}")
                         client.challenges.create(username=target, rated=True, clock_limit=180, clock_increment=2, variant='standard')
                 time.sleep(45)
             except Exception as e:
-                if "429" in str(e):
-                    time.sleep(60)
-                else:
-                    time.sleep(20)
+                time.sleep(60 if "429" in str(e) else 20)
 
     threading.Thread(target=auto_challenger, daemon=True).start()
 
     def handle_game(game_id):
-        print(f"⚙️ Выделен поток для игры {game_id}")
         try:
             board = None
             my_color = None
@@ -373,7 +413,6 @@ def run_chess_bot():
                     board = chess.Board(initial_fen)
                     white_id = state.get('white', {}).get('id', '')
                     my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
-                    print(f"🎯 Игра {game_id}: бот играет за {'БЕЛЫХ' if my_color == chess.WHITE else 'ЧЕРНЫХ'}")
                     game_state = state.get('state', {})
                 else:
                     game_state = state
@@ -383,9 +422,20 @@ def run_chess_bot():
                     board.push_uci(raw_moves[moves_count])
                     moves_count += 1
 
+                # УМНЫЙ ТАЙМ-МЕНЕДЖМЕНТ
+                # Адаптируем глубину под остаток времени на часах
+                my_time_key = 'wtime' if my_color == chess.WHITE else 'btime'
+                available_time = game_state.get(my_time_key, 180000) / 1000.0 # в секундах
+                
+                if available_time < 20: 
+                    current_depth = 2 # Аварийный режим, спасаемся от флажка
+                elif available_time < 50: 
+                    current_depth = 3
+                else: 
+                    current_depth = 4 # Стандартная высокая точность
+
                 status = game_state.get('status')
                 if status in ['mate', 'resign', 'draw', 'timeout', 'stalemate', 'outoftime']:
-                    print(f"🏁 Партия {game_id} завершена. Итог: {status}")
                     if game_state.get('winner') and my_history:
                         winner = game_state['winner']
                         if (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE):
@@ -394,56 +444,37 @@ def run_chess_bot():
 
                 if board.turn == my_color and not board.is_game_over():
                     current_fen = board.fen()
-                    # Запускаем поиск на глубину 4 полухода (благодаря MVV-LVA это быстро!)
-                    move, score = find_best_move(board, depth=4)
+                    move, score = find_best_move(board, depth=current_depth)
                     if move:
                         move_uci = move.uci()
-                        print(f"📈 [{game_id}] Ход: {move_uci} (Оценка движка: {score:+.2f})")
+                        print(f"🎯 [{game_id}] Ход: {move_uci} (Оценка: {score:+.2f} | Глубина: {current_depth})")
                         try:
                             client.bots.make_move(game_id, move_uci)
                             my_history.append((current_fen, move_uci))
                         except Exception as e:
-                            print(f"❌ Ход не дошел: {e}")
+                            print(f"❌ Ход сорвался: {e}")
         except Exception as e:
-            print(f"💥 Сбой в потоке партии {game_id}: {e}")
             traceback.print_exc()
         finally:
             active_games.discard(game_id)
 
-    print("📥 Ожидание входящих вызовов...")
     while True:
         try:
             for event in client.bots.stream_incoming_events():
                 event_type = event.get('type')
-                
                 if event_type == 'challenge':
                     c_id = event['challenge']['id']
-                    challenger = event['challenge']['challenger']['id']
                     if len(active_games) < MAX_CONCURRENT_GAMES:
-                        print(f"🤝 Принят вызов от @{challenger}")
                         client.bots.accept_challenge(c_id)
                     else:
                         client.bots.decline_challenge(c_id, reason='later')
-                        
                 elif event_type == 'gameStart':
                     g_id = event['game']['id']
                     if g_id not in active_games:
                         active_games.add(g_id)
                         threading.Thread(target=handle_game, args=(g_id,), daemon=True).start()
         except Exception as e:
-            print(f"⚠️ Сетевая ошибка главного стрима: {e}")
-            if "429" in str(e):
-                print("🛑 Сработал лимит Личесса (429). Отдыхаем 60 секунд...")
-                time.sleep(60)
-            else:
-                traceback.print_exc()
-                time.sleep(5)
-
-# ================= 10. ТОЧКА ВХОДА ДЛЯ ACTIONS =================
+            time.sleep(60 if "429" in str(e) else 5)
 
 if __name__ == '__main__':
-    print("⏳ Разворачивание шахматного ядра на сервере GitHub Actions...")
-    try:
-        run_chess_bot()
-    except KeyboardInterrupt:
-        print("Процесс завершен.")
+    run_chess_bot()
