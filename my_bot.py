@@ -404,6 +404,26 @@ def run_chess_bot():
             moves_count = 0
             my_history = []
             
+            # Списки фраз для чата
+            greetings = [
+                "Привет! Поиграем? Удачи! 🤖",
+                "Приветствую! Пусть победит сильнейший! ⚔️",
+                "Здравствуй, человек. Хет-АИ готов к бою! 🚀",
+                "Привет! Надеюсь, игра будет интересной. Нападай! 🔥"
+            ]
+            
+            goodbyes_win = [
+                "Отличная игра! Спасибо за партию. 🤝",
+                "Шах и мат. Было круто, спасибо! 👑",
+                "Хорошо сыграно! Удачи в следующих играх!"
+            ]
+            
+            goodbyes_lose = [
+                "Ух, это было мощно. Поздравляю с победой! 👏",
+                "Отличный маневр, ты играешь круче моего процессора! Меня надо подкрутить... 🛠️",
+                "Хорошая игра! Спасибо за урок."
+            ]
+
             for state in client.bots.stream_game_state(game_id):
                 if state.get('type') == 'gameFull':
                     initial_fen = state.get('initialFen', chess.STARTING_FEN)
@@ -413,6 +433,13 @@ def run_chess_bot():
                     board = chess.Board(initial_fen)
                     white_id = state.get('white', {}).get('id', '')
                     my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
+                    
+                    # 💬 БОТ ЗДОРОВАЕТСЯ ПРИ СТАРТЕ ПАРТИИ
+                    try:
+                        client.bots.post_message(game_id, random.choice(greetings))
+                    except Exception:
+                        pass
+                        
                     game_state = state.get('state', {})
                 else:
                     game_state = state
@@ -422,20 +449,32 @@ def run_chess_bot():
                     board.push_uci(raw_moves[moves_count])
                     moves_count += 1
 
-                # УМНЫЙ ТАЙМ-МЕНЕДЖМЕНТ
-                # Адаптируем глубину под остаток времени на часах
                 my_time_key = 'wtime' if my_color == chess.WHITE else 'btime'
-                available_time = game_state.get(my_time_key, 180000) / 1000.0 # в секундах
+                available_time = game_state.get(my_time_key, 180000) / 1000.0
                 
                 if available_time < 20: 
-                    current_depth = 2 # Аварийный режим, спасаемся от флажка
+                    current_depth = 2
                 elif available_time < 50: 
                     current_depth = 3
                 else: 
-                    current_depth = 4 # Стандартная высокая точность
+                    current_depth = 4
 
                 status = game_state.get('status')
                 if status in ['mate', 'resign', 'draw', 'timeout', 'stalemate', 'outoftime']:
+                    # 💬 БОТ ПРОЩАЕТСЯ В КОНЦЕ ПАРТИИ
+                    try:
+                        winner = game_state.get('winner')
+                        if winner:
+                            # Если победил наш цвет
+                            if (winner == 'white' and my_color == chess.WHITE) or (winner == 'black' and my_color == chess.BLACK):
+                                client.bots.post_message(game_id, random.choice(goodbyes_win))
+                            else:
+                                client.bots.post_message(game_id, random.choice(goodbyes_lose))
+                        else:
+                            client.bots.post_message(game_id, "Ничья! Отличный баланс сил. Спасибо за игру! 🤝")
+                    except Exception:
+                        pass
+
                     if game_state.get('winner') and my_history:
                         winner = game_state['winner']
                         if (winner == 'white' and my_color == chess.BLACK) or (winner == 'black' and my_color == chess.WHITE):
