@@ -11,7 +11,7 @@ import chess.polyglot
 # ================= 1. РАСШИРЕННАЯ ДЕБЮТНАЯ КНИГА ОСТРЫХ ЛИНИЙ =================
 
 OPENING_BOOK = {
-    "": ["e2e4", "d2d4", "g1f3", "c2c4"],
+    "": ["e2e4", "d2d4", "g1f3", "c4c4"],
     "e2e4 e7e5": ["g1f3"],
     "e2e4 e7e5 g1f3": ["b8c6"],
     "e2e4 e7e5 g1f3 b8c6": ["b1b5", "d2d4", "b1c4"],
@@ -41,7 +41,7 @@ OPENING_BOOK = {
     "c4c4": ["e7e5", "c7c5"]
 }
 
-# ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ (PST) =================
+# ================= 2. ПОЗИЦИОННЫЕ МАТРИЦЫ (PST) ДЛЯ 1600 ELO =================
 
 PAWN_PST = [
     0,  0,  0,  0,  0,  0,  0,  0,
@@ -74,6 +74,28 @@ BISHOP_PST = [
     -10, 10, 10, 10, 10, 10, 10,-10,
     -10,  5,  0,  0,  0,  0,  5,-10,
     -20,-10,-10,-10,-10,-10,-10,-20
+]
+
+ROOK_PST = [
+      0,  0,  0,  0,  0,  0,  0,  0,
+      5, 10, 10, 10, 10, 10, 10,  5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+     -5,  0,  0,  0,  0,  0,  0, -5,
+      0,  0,  0,  5,  5,  0,  0,  0
+]
+
+QUEEN_PST = [
+    -20,-10,-10, -5, -5,-10,-10,-20,
+    -10,  0,  0,  0,  0,  0,  0,-10,
+    -10,  0,  5,  5,  5,  5,  0,-10,
+     -5,  0,  5,  5,  5,  5,  0, -5,
+      0,  0,  5,  5,  5,  5,  0, -5,
+    -10,  5,  5,  5,  5,  5,  0,-10,
+    -10,  0,  5,  0,  0,  0,  0,-10,
+    -20,-10,-10,-5,  -5,-10,-10,-20
 ]
 
 KING_MIDDLEGAME_PST = [
@@ -151,7 +173,6 @@ def evaluate_board(board):
 
     score = 0
     
-    # Итерируемся только по реальным фигурам через piece_map()
     for square, piece in board.piece_map().items():
         val = piece_values[piece.piece_type]
         idx = square if piece.color == chess.WHITE else chess.square_mirror(square)
@@ -160,10 +181,12 @@ def evaluate_board(board):
             if piece.piece_type == chess.PAWN: val += PAWN_PST[idx]
             elif piece.piece_type == chess.KNIGHT: val += KNIGHT_PST[idx]
             elif piece.piece_type == chess.BISHOP: val += BISHOP_PST[idx]
+            elif piece.piece_type == chess.ROOK: val += ROOK_PST[idx]      # Новое!
+            elif piece.piece_type == chess.QUEEN: val += QUEEN_PST[idx]    # Новое!
             elif piece.piece_type == chess.KING:
                 val += KING_ENDGAME_PST[idx] if is_endgame else KING_MIDDLEGAME_PST[idx]
         
-        # Близость к вражескому королю
+        # Охота на короля в миттельшпиле
         if not is_endgame and piece.piece_type in [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]:
             enemy_king = black_king_sq if piece.color == chess.WHITE else white_king_sq
             if enemy_king is not None:
@@ -176,7 +199,7 @@ def evaluate_board(board):
         else:
             score -= val
 
-    # Мобильность
+    # Мобильность фигур (активность на доске)
     mobility = board.legal_moves.count()
     if board.turn == chess.WHITE:
         score += mobility * 2
@@ -269,7 +292,7 @@ def minimax(board, depth, alpha, beta, is_maximizing):
 def find_best_move(board, depth=3):
     my_color = board.turn
     
-    # 1. Проверяем Polyglot книгу
+    # 1. Polyglot книга
     if os.path.exists("book.bin") and not board.chess960:
         try:
             with chess.polyglot.open_reader("book.bin") as reader:
@@ -360,7 +383,6 @@ def run_chess_bot():
     active_games = set()
     MAX_CONCURRENT_GAMES = 2
 
-    # Автоматический вызов других ботов
     def auto_challenger():
         while True:
             try:
@@ -376,7 +398,6 @@ def run_chess_bot():
 
     threading.Thread(target=auto_challenger, daemon=True).start()
 
-    # Обработка игровой партии
     def handle_game(game_id):
         try:
             board = None
@@ -384,7 +405,6 @@ def run_chess_bot():
             moves_count = 0
             my_history = []
             
-            # Фразы для общения
             greetings = [
                 "Привет! Поиграем? Удачи! 🤖",
                 "Приветствую! Пусть победит сильнейший! ⚔️",
@@ -412,7 +432,6 @@ def run_chess_bot():
                     white_id = state.get('white', {}).get('id', '')
                     my_color = chess.WHITE if white_id.lower() == my_username.lower() else chess.BLACK
                     
-                    # Приветствие в чате
                     try:
                         client.bots.post_message(game_id, random.choice(greetings))
                     except Exception:
@@ -427,7 +446,7 @@ def run_chess_bot():
                     board.push_uci(raw_moves[moves_count])
                     moves_count += 1
 
-                # УМНЫЙ И БЕЗОПАСНЫЙ ТАЙМ-МЕНЕДЖМЕНТ (ФИКС ОШИБКИ TIMEDELTA)
+                # УМНЫЙ И БЕЗОПАСНЫЙ ТАЙМ-МЕНЕДЖМЕНТ
                 my_time_key = 'wtime' if my_color == chess.WHITE else 'btime'
                 raw_time = game_state.get(my_time_key)
                 
@@ -438,15 +457,16 @@ def run_chess_bot():
                 else:
                     available_time = 180.0
                 
-                # Выбор динамической глубины в секундах
+                # ДИНАМИЧЕСКАЯ ГЛУБИНА С ФОРСАЖЕМ ДЛЯ БЛИЦА И РАПИДА
                 if available_time < 15: 
                     current_depth = 1  
-                elif available_time < 40: 
+                elif available_time < 45: 
                     current_depth = 2
+                elif available_time < 90: 
+                    current_depth = 3   # В пуле и в эндшпиле блица играем быстро
                 else: 
-                    current_depth = 3
+                    current_depth = 4   # Когда времени много (Блиц/Рапид), считаем на ход глубже!
 
-                # Конец игры — прощание и запись ошибок
                 status = game_state.get('status')
                 if status in ['mate', 'resign', 'draw', 'timeout', 'stalemate', 'outoftime']:
                     try:
@@ -467,7 +487,6 @@ def run_chess_bot():
                             save_bad_move(my_history[-1][0], my_history[-1][1])
                     break
 
-                # Ход бота
                 if board.turn == my_color and not board.is_game_over():
                     current_fen = board.fen()
                     move, score = find_best_move(board, depth=current_depth)
@@ -484,7 +503,6 @@ def run_chess_bot():
         finally:
             active_games.discard(game_id)
 
-    # Главный цикл прослушивания событий Lichess
     while True:
         try:
             for event in client.bots.stream_incoming_events():
